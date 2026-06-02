@@ -72,16 +72,29 @@ public sealed class HermesApiClient : IDisposable
 
     /// <summary>
     /// Creates a fresh session that chat turns can be attached to. Hermes
-    /// auto-fills source / model from server config when omitted.
+    /// auto-fills source / model from server config when omitted, and the
+    /// gateway will auto-generate a title from the first message so we don't
+    /// need to invent one (which used to collide — titles are unique).
     /// </summary>
     public async Task<SessionDetail?> CreateSessionAsync(string? title, CancellationToken ct = default)
     {
-        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/sessions")
+        // Drop a hard-coded title — duplicate titles return 400 invalid_title,
+        // and the server will name the session itself based on the first message.
+        var req = string.IsNullOrWhiteSpace(title)
+            ? new CreateSessionRequest(null, null)
+            : new CreateSessionRequest(title, null);
+
+        using var msg = new HttpRequestMessage(HttpMethod.Post, "/api/sessions")
         {
-            Content = JsonContent.Create(new CreateSessionRequest(title, "api"), options: JsonOpts),
+            Content = JsonContent.Create(req, options: JsonOpts),
         };
-        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
-        resp.EnsureSuccessStatusCode();
+        using var resp = await _http.SendAsync(msg, ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+        {
+            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            throw new HttpRequestException(
+                $"{(int)resp.StatusCode} {resp.ReasonPhrase}: {body}");
+        }
         var env = await resp.Content.ReadFromJsonAsync<CreateSessionResponse>(JsonOpts, ct).ConfigureAwait(false);
         return env?.Session;
     }

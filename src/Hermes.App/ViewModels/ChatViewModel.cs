@@ -103,15 +103,16 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         IsBusy = true;
         StatusText = "Streaming…";
 
-        // Lazily create a session on first send. Reusing it across turns means
-        // the conversation shows up in the Sessions page and Hermes maintains
-        // context across turns.
+        // Lazily create a session on first send. We don't pass a title — let the
+        // gateway auto-generate one from the first message so we never collide
+        // with an existing session (titles are server-enforced unique).
         if (string.IsNullOrEmpty(SessionId))
         {
             try
             {
-                var sess = await _api.CreateSessionAsync(SessionTitle ?? "WinUI chat", CancellationToken.None);
+                var sess = await _api.CreateSessionAsync(null, CancellationToken.None);
                 SessionId = sess?.Id;
+                SessionTitle = sess?.Title;
             }
             catch (Exception ex)
             {

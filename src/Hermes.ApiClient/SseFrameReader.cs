@@ -36,6 +36,15 @@ internal static class SseFrameReader
             string? line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
             if (line is null)
             {
+                // Stream closed (server disconnected). Some servers — including
+                // Hermes — close right after writing the final event without a
+                // trailing blank line. Flush whatever is in the buffer so the
+                // caller still sees the terminal event.
+                if (data.Length > 0 || evt is not null || id is not null)
+                {
+                    if (data.Length > 0 && data[^1] == '\n') data.Length--;
+                    yield return new Frame { Event = evt, Data = data.ToString(), Id = id };
+                }
                 break;
             }
 
