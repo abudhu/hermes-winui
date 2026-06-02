@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Hermes.ApiClient/Hermes.ApiClient.csproj" />
+    <Project Path="src/Hermes.TrayApp/Hermes.TrayApp.csproj" />
+  </Folder>
+</Solution>
