@@ -49,6 +49,15 @@ public sealed class HermesApiClient : IDisposable
     public Task<Capabilities?> GetCapabilitiesAsync(CancellationToken ct = default) =>
         GetJsonAsync<Capabilities>("/v1/capabilities", ct);
 
+    /// <summary>
+    /// Lists recent sessions across every source (cli, api, cron, message platforms).
+    /// Crucially this sees sessions running in <i>external</i> processes (e.g. a `hermes`
+    /// CLI session you started in PowerShell) — `/health/detailed.active_agents` only
+    /// counts agents inside the gateway process itself.
+    /// </summary>
+    public Task<SessionList?> GetSessionsAsync(int limit = 25, bool includeChildren = true, CancellationToken ct = default) =>
+        GetJsonAsync<SessionList>($"/api/sessions?limit={limit}&include_children={(includeChildren ? "true" : "false")}", ct);
+
     private async Task<T?> GetJsonAsync<T>(string path, CancellationToken ct)
     {
         using var response = await _http.GetAsync(path, ct).ConfigureAwait(false);
