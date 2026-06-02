@@ -46,12 +46,22 @@ public sealed record ToolProgressEvent : ChatStreamEvent
     public string? Message { get; init; }
 }
 
+/// <summary>Terminal: the assistant message finished. Carries the full content
+/// so we can recover even if deltas were dropped along the way.</summary>
+public sealed record AssistantCompletedEvent : ChatStreamEvent
+{
+    public string? Content { get; init; }
+    public string? MessageId { get; init; }
+}
+
 /// <summary>Terminal: the whole run completed.</summary>
 public sealed record RunCompletedEvent : ChatStreamEvent
 {
     public string? Output { get; init; }
     public string? UsageJson { get; init; }
     public string? RunId { get; init; }
+    /// <summary>Final messages array from run.completed (assistant content is here).</summary>
+    public string? FinalAssistantContent { get; init; }
 }
 
 /// <summary>Terminal: the run errored.</summary>

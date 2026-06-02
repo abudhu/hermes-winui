@@ -142,23 +142,30 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
             {
                 await foreach (var evt in _stream.StreamSessionChatAsync(SessionId!, text, token))
                 {
-                    HandleEvent(evt);
+                    HandleEvent(assistant, evt);
                 }
             }, token);
 
-            FinalFlush();
+            // Give any TryEnqueue'd handlers from the worker a chance to run
+            // BEFORE we tear down `_currentAssistant`. Without this, late deltas
+            // posted near the end of the stream race the finally block and get
+            // dropped silently.
+            await DrainDispatcherAsync();
+            FinalFlush(assistant);
             if (assistant.State == MessageState.Streaming) assistant.State = MessageState.Completed;
             StatusText = "Ready";
         }
         catch (OperationCanceledException)
         {
-            FinalFlush();
+            await DrainDispatcherAsync();
+            FinalFlush(assistant);
             if (assistant.State == MessageState.Streaming) assistant.State = MessageState.Stopped;
             StatusText = "Stopped";
         }
         catch (Exception ex)
         {
-            FinalFlush();
+            await DrainDispatcherAsync();
+            FinalFlush(assistant);
             assistant.Buffer.Append("\n\n*Stream error: ").Append(ex.Message).Append('*');
             assistant.Content = assistant.Buffer.ToString();
             assistant.State = MessageState.Failed;
@@ -195,14 +202,14 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         StatusText = "Ready";
     }
 
-    /// <summary>Marshals one parsed SSE event onto the UI thread.</summary>
-    private void HandleEvent(ChatStreamEvent evt)
+    /// <summary>Marshals one parsed SSE event onto the UI thread. The target
+    /// <paramref name="msg"/> is captured explicitly per turn so the dispatched
+    /// closure never has to read shared state (which can be reset by the time
+    /// the closure actually runs).</summary>
+    private void HandleEvent(MessageVm msg, ChatStreamEvent evt)
     {
         _dispatcher.TryEnqueue(() =>
         {
-            var msg = _currentAssistant;
-            if (msg is null) return;
-
             switch (evt)
             {
                 case AssistantDeltaEvent d:
@@ -243,10 +250,32 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
                     }
                     break;
 
+                case AssistantCompletedEvent ac:
+                    // The terminal assistant.completed event carries the FULL
+                    // final content. Treat it as authoritative — overwrite our
+                    // (possibly-lossy) delta buffer so the bubble is never
+                    // blank even if some delta events were dropped/raced.
+                    if (!string.IsNullOrEmpty(ac.Content))
+                    {
+                        msg.Buffer.Clear();
+                        msg.Buffer.Append(ac.Content);
+                        msg.Content = ac.Content!;
+                    }
+                    break;
+
                 case RunCompletedEvent rc:
-                    if (!string.IsNullOrEmpty(rc.Output) && msg.Buffer.Length == 0)
+                    // Belt-and-braces: run.completed also carries the final
+                    // assistant content in its messages[] array. Use it as a
+                    // last-resort fallback if everything before us was empty.
+                    if (!string.IsNullOrEmpty(rc.FinalAssistantContent) && msg.Buffer.Length == 0)
+                    {
+                        msg.Buffer.Append(rc.FinalAssistantContent);
+                        msg.Content = rc.FinalAssistantContent!;
+                    }
+                    else if (!string.IsNullOrEmpty(rc.Output) && msg.Buffer.Length == 0)
                     {
                         msg.Buffer.Append(rc.Output);
+                        msg.Content = rc.Output!;
                     }
                     break;
 
@@ -283,26 +312,44 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         {
             _flushTimer = _dispatcher.CreateTimer();
             _flushTimer.Interval = TimeSpan.FromMilliseconds(60);
-            _flushTimer.Tick += (s, e) => FlushBufferOnce();
+            _flushTimer.Tick += (s, e) =>
+            {
+                var cur = _currentAssistant;
+                if (cur is not null) FlushBufferOnce(cur);
+            };
         }
         _flushTimer.Start();
     }
 
     private void StopFlushTimer() => _flushTimer?.Stop();
 
-    private void FlushBufferOnce()
+    /// <summary>Copies the StringBuilder buffers into the bound .Content /
+    /// .Reasoning properties (which raise INPC). Always overwrites — the prior
+    /// length-compare optimization was a footgun because equal lengths don't
+    /// imply equal content.</summary>
+    private static void FlushBufferOnce(MessageVm msg)
     {
-        var msg = _currentAssistant;
-        if (msg is null) return;
         var buf = msg.Buffer.ToString();
-        if (buf.Length != msg.Content.Length) msg.Content = buf;
+        if (!ReferenceEquals(buf, msg.Content) && buf != msg.Content) msg.Content = buf;
         var rbuf = msg.ReasoningBuffer.ToString();
-        if (rbuf.Length != msg.Reasoning.Length) msg.Reasoning = rbuf;
+        if (!ReferenceEquals(rbuf, msg.Reasoning) && rbuf != msg.Reasoning) msg.Reasoning = rbuf;
     }
 
-    private void FinalFlush()
+    /// <summary>Final synchronous flush against an explicit message — called
+    /// from SendAsync's UI-thread continuation so it can't race with the
+    /// finally block clearing <see cref="_currentAssistant"/>.</summary>
+    private static void FinalFlush(MessageVm msg) => FlushBufferOnce(msg);
+
+    /// <summary>Yields long enough for any pending dispatcher work queued
+    /// by the streaming worker to run before we proceed. Two yields back to
+    /// back gives WinUI's pump a chance to drain both the queued delta
+    /// callbacks and any continuations they spawned.</summary>
+    private async Task DrainDispatcherAsync()
     {
-        _dispatcher.TryEnqueue(FlushBufferOnce);
+        await Task.Yield();
+        var tcs = new TaskCompletionSource();
+        _dispatcher.TryEnqueue(DispatcherQueuePriority.Low, () => tcs.TrySetResult());
+        await tcs.Task;
     }
 
     private void FinishAssistant(MessageState state, string trailingMarkdown)

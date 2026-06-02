@@ -110,6 +110,8 @@ public sealed class HermesStreamingClient : IDisposable
                     ParseToolCompleted(data),
                 "tool.progress" =>
                     ParseToolProgress(data),
+                "assistant.completed" or "message.completed" =>
+                    ParseAssistantCompleted(data),
                 "run.completed" or "response.completed" =>
                     ParseRunCompleted(data),
                 "error" or "run.error" or "response.error" =>
@@ -205,6 +207,27 @@ public sealed class HermesStreamingClient : IDisposable
         }
         using var doc = JsonDocument.Parse(data);
         var root = doc.RootElement;
+
+        // Hermes shape: { messages: [{ role: "assistant", content: "..." }, ...] }
+        // The final assistant message content is our last-resort source of truth.
+        string? finalContent = null;
+        if (root.TryGetProperty("messages", out var msgs) && msgs.ValueKind == JsonValueKind.Array)
+        {
+            for (int i = msgs.GetArrayLength() - 1; i >= 0; i--)
+            {
+                var m = msgs[i];
+                if (m.TryGetProperty("role", out var r) &&
+                    r.ValueKind == JsonValueKind.String &&
+                    r.GetString() == "assistant" &&
+                    m.TryGetProperty("content", out var c) &&
+                    c.ValueKind == JsonValueKind.String)
+                {
+                    finalContent = c.GetString();
+                    break;
+                }
+            }
+        }
+
         return new RunCompletedEvent
         {
             RawEvent = "run.completed",
@@ -212,6 +235,20 @@ public sealed class HermesStreamingClient : IDisposable
             Output = TryGetString(root, "output"),
             UsageJson = TryGetJson(root, "usage"),
             RunId = TryGetString(root, "run_id"),
+            FinalAssistantContent = finalContent,
+        };
+    }
+
+    private static AssistantCompletedEvent ParseAssistantCompleted(string data)
+    {
+        using var doc = JsonDocument.Parse(data);
+        var root = doc.RootElement;
+        return new AssistantCompletedEvent
+        {
+            RawEvent = "assistant.completed",
+            RawData = data,
+            Content = TryGetString(root, "content"),
+            MessageId = TryGetString(root, "message_id"),
         };
     }
 
