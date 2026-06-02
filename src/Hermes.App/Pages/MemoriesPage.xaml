@@ -4,53 +4,139 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-    xmlns:local="using:Hermes.App.Pages"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:app="using:Hermes.App"
+    xmlns:vm="using:Hermes.App.ViewModels"
     mc:Ignorable="d">
 
-    <Grid Padding="32,24,32,32" RowSpacing="20">
+    <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-            <FontIcon Glyph="&#xE81C;" FontSize="28"
-                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-            <TextBlock Style="{StaticResource TitleLargeTextBlockStyle}" Text="Memories" />
-        </StackPanel>
+        <Border Grid.Row="0"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="24,16">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Spacing="2">
+                    <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="Memories" />
+                    <TextBlock x:Name="Subtitle"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Text="—" />
+                </StackPanel>
+                <Button Grid.Column="1" Click="OpenFolder_Click" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE838;" FontSize="14" />
+                        <TextBlock Text="Open folder" />
+                    </StackPanel>
+                </Button>
+                <Button Grid.Column="2" Click="Refresh_Click" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                        <TextBlock Text="Refresh" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Border>
 
-        <TextBlock Grid.Row="1"
-                   Style="{StaticResource BodyTextBlockStyle}"
-                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                   MaxWidth="640"
-                   HorizontalAlignment="Left"
-                   TextWrapping="Wrap"
-                   Text="Inspect and curate the memories Hermes has learned about you, your projects, and your preferences." />
+        <Grid Grid.Row="1" Padding="24">
+            <Grid x:Name="ContentGrid" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
 
-        <Border Grid.Row="2"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8"
-                Padding="32"
-                HorizontalAlignment="Stretch"
-                VerticalAlignment="Stretch">
-            <StackPanel Spacing="12"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center">
-                <FontIcon Glyph="&#xE7B5;" FontSize="36"
+                <Border Grid.Row="0"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="14,10"
+                        Margin="0,0,0,16">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Glyph="&#xE838;" FontSize="14"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  VerticalAlignment="Center" />
+                        <TextBlock x:Name="MemoryPathLabel"
+                                   FontFamily="Consolas"
+                                   IsTextSelectionEnabled="True"
+                                   VerticalAlignment="Center"
+                                   Text="—" />
+                    </StackPanel>
+                </Border>
+
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <ItemsRepeater ItemsSource="{x:Bind Items, Mode=OneWay}">
+                        <ItemsRepeater.Layout>
+                            <StackLayout Spacing="8" />
+                        </ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate x:DataType="vm:MemoryItemVm">
+                                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="14,10">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Grid.Column="0"
+                                                  Glyph="&#xE81C;" FontSize="14"
+                                                  VerticalAlignment="Center"
+                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <TextBlock Text="{x:Bind Name}"
+                                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                            <TextBlock Text="{x:Bind RelativePath}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" HorizontalAlignment="Right" Spacing="2">
+                                            <TextBlock Text="{x:Bind SizeText}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       HorizontalAlignment="Right" />
+                                            <TextBlock Text="{x:Bind WhenText}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                       HorizontalAlignment="Right" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                </ScrollViewer>
+            </Grid>
+
+            <StackPanel x:Name="EmptyState" Spacing="12"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Visibility="Collapsed">
+                <FontIcon Glyph="&#xE81C;" FontSize="40"
                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                 <TextBlock Style="{StaticResource SubtitleTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                            HorizontalAlignment="Center"
-                           Text="Coming soon" />
-                <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
+                           Text="No memories yet" />
+                <TextBlock x:Name="EmptyHelp"
+                           Style="{StaticResource CaptionTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                            HorizontalAlignment="Center"
-                           Text="This surface is part of the next milestone." />
+                           MaxWidth="460"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap"
+                           Text="As Hermes learns about you and your projects, files will appear in its memories directory." />
             </StackPanel>
-        </Border>
+        </Grid>
     </Grid>
 </Page>

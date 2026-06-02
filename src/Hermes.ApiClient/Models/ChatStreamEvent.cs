@@ -1,0 +1,69 @@
+namespace Hermes.ApiClient.Models;
+
+/// <summary>
+/// Discriminated union of Hermes SSE events. We parse the SSE frame field by
+/// field, then dispatch on the <c>event:</c> name. Any payload we don't model
+/// becomes <see cref="UnknownStreamEvent"/> — the UI logs it but keeps streaming,
+/// because Hermes is allowed to add new event types without notice.
+/// </summary>
+public abstract record ChatStreamEvent
+{
+    /// <summary>The raw <c>event:</c> name as it came off the wire.</summary>
+    public string RawEvent { get; init; } = "";
+    /// <summary>The raw <c>data:</c> payload (multi-line concatenated, newline-joined).</summary>
+    public string RawData { get; init; } = "";
+}
+
+/// <summary>Incremental token from the assistant.</summary>
+public sealed record AssistantDeltaEvent : ChatStreamEvent
+{
+    public string Text { get; init; } = "";
+}
+
+/// <summary>Tool call has been dispatched.</summary>
+public sealed record ToolStartedEvent : ChatStreamEvent
+{
+    public string? Name { get; init; }
+    public string? CallId { get; init; }
+    public string? ArgumentsJson { get; init; }
+}
+
+/// <summary>Tool call returned a result.</summary>
+public sealed record ToolCompletedEvent : ChatStreamEvent
+{
+    public string? Name { get; init; }
+    public string? CallId { get; init; }
+    public string? OutputText { get; init; }
+    public string? OutputJson { get; init; }
+    public bool IsError { get; init; }
+}
+
+/// <summary>Progress update from inside a running tool (optional).</summary>
+public sealed record ToolProgressEvent : ChatStreamEvent
+{
+    public string? Name { get; init; }
+    public string? CallId { get; init; }
+    public string? Message { get; init; }
+}
+
+/// <summary>Terminal: the whole run completed.</summary>
+public sealed record RunCompletedEvent : ChatStreamEvent
+{
+    public string? Output { get; init; }
+    public string? UsageJson { get; init; }
+    public string? RunId { get; init; }
+}
+
+/// <summary>Terminal: the run errored.</summary>
+public sealed record StreamErrorEvent : ChatStreamEvent
+{
+    public string Message { get; init; } = "";
+}
+
+/// <summary>Anything we don't know about — keep going.</summary>
+public sealed record UnknownStreamEvent : ChatStreamEvent;
+
+public sealed record SessionChatRequest(
+    string Input,
+    string? Instructions = null
+);

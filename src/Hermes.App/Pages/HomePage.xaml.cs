@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Hermes.ApiClient;
 using Hermes.ApiClient.Models;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -17,6 +18,7 @@ public sealed partial class HomePage : Page
 {
     private readonly HermesApiClient _api;
     private CancellationTokenSource? _inflight;
+    private DispatcherQueueTimer? _autoTimer;
 
     public HomePage()
     {
@@ -34,6 +36,23 @@ public sealed partial class HomePage : Page
     {
         base.OnNavigatedTo(e);
         await RefreshAsync();
+
+        // Keep the dashboard fresh while the page is visible. 5s matches the
+        // tray app cadence so they don't disagree if both are open.
+        if (_autoTimer is null)
+        {
+            _autoTimer = DispatcherQueue.CreateTimer();
+            _autoTimer.Interval = TimeSpan.FromSeconds(5);
+            _autoTimer.Tick += async (_, _) => await RefreshAsync();
+        }
+        _autoTimer.Start();
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        _autoTimer?.Stop();
+        _inflight?.Cancel();
     }
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)

@@ -9,14 +9,14 @@
   IgnorableNamespaces="uap rescap systemai">
 
   <Identity
-    Name="CCC26D30-3852-4DDA-81AA-F26D510404E5"
+    Name="Hermes.App"
     Publisher="CN=Hermes"
     Version="1.0.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="CCC26D30-3852-4DDA-81AA-F26D510404E5" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
-    <DisplayName>Hermes.App</DisplayName>
+    <DisplayName>Hermes</DisplayName>
     <PublisherDisplayName>Hermes</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -35,8 +35,8 @@
       Executable="$targetnametoken$.exe"
       EntryPoint="$targetentrypoint$">
       <uap:VisualElements
-        DisplayName="Hermes.App"
-        Description="Hermes.App"
+        DisplayName="Hermes"
+        Description="Hermes companion app"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">

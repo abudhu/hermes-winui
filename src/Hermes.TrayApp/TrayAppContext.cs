@@ -70,6 +70,7 @@ public sealed class TrayAppContext : ApplicationContext
             _sessionsItem,
             _platformsItem,
             new ToolStripSeparator(),
+            MakeAction("Open Hermes app",     (_, _) => OpenHermesApp()),
             MakeAction("Refresh now",         (_, _) => _ = RefreshAsync()),
             MakeAction("Open Hermes folder",  (_, _) => OpenFolder(_config.ConfigDirectory)),
             MakeAction("Open logs folder",    (_, _) => OpenFolder(Path.Combine(_config.ConfigDirectory, "logs"))),
@@ -402,6 +403,36 @@ public sealed class TrayAppContext : ApplicationContext
         catch (Exception ex)
         {
             MessageBox.Show($"Couldn't open {path}:\n{ex.Message}", "Hermes Tray",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>
+    /// Launches the packaged Hermes WinUI app via its AUMID. Uses the shell
+    /// "AppsFolder" protocol — equivalent to the user clicking it in Start.
+    /// If the package isn't installed, surface a clear error rather than
+    /// silently failing.
+    /// </summary>
+    private static void OpenHermesApp()
+    {
+        // Package family name from Hermes.App's Package.appxmanifest identity.
+        const string Aumid = @"Hermes.App_hyqgre7ye1qte!App";
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"shell:AppsFolder\\{Aumid}",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Couldn't launch Hermes app:\n{ex.Message}\n\n" +
+                "Make sure the Hermes.App MSIX package is installed (run\n" +
+                "`dotnet build src\\Hermes.App\\Hermes.App.csproj` once to register it).",
+                "Hermes Tray",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }

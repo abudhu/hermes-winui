@@ -4,53 +4,288 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-    xmlns:local="using:Hermes.App.Pages"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:app="using:Hermes.App"
+    xmlns:controls="using:Hermes.App.Controls"
+    xmlns:vm="using:Hermes.App.ViewModels"
     mc:Ignorable="d">
 
-    <Grid Padding="32,24,32,32" RowSpacing="20">
+    <Page.Resources>
+
+        <!-- User bubble: right-aligned, accent-tinted, slight shadow -->
+        <DataTemplate x:Key="UserTemplate" x:DataType="vm:MessageVm">
+            <Grid Padding="0,6,0,6" HorizontalAlignment="Stretch">
+                <Border MaxWidth="640"
+                        HorizontalAlignment="Right"
+                        Background="{ThemeResource AccentFillColorDefaultBrush}"
+                        CornerRadius="12,12,2,12"
+                        Padding="14,10">
+                    <TextBlock Text="{x:Bind Content, Mode=OneWay}"
+                               Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                               TextWrapping="Wrap"
+                               IsTextSelectionEnabled="True"
+                               FontSize="14" />
+                </Border>
+            </Grid>
+        </DataTemplate>
+
+        <!-- Assistant bubble: left-aligned card with tool-call expanders -->
+        <DataTemplate x:Key="AssistantTemplate" x:DataType="vm:MessageVm">
+            <Grid Padding="0,6,0,6" HorizontalAlignment="Stretch">
+                <Border MaxWidth="720"
+                        HorizontalAlignment="Left"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="12,12,12,2"
+                        Padding="14,10">
+                    <StackPanel Spacing="8">
+
+                        <!-- Reasoning ("thinking") trail; only shown when present -->
+                        <Expander HorizontalAlignment="Stretch"
+                                  HorizontalContentAlignment="Stretch"
+                                  Visibility="{x:Bind app:Converters.BoolToVisible(HasReasoning), Mode=OneWay}">
+                            <Expander.Header>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE9D9;"
+                                              FontSize="14"
+                                              Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                    <TextBlock Text="Thinking"
+                                               Style="{StaticResource BodyStrongTextBlockStyle}"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Expander.Header>
+                            <TextBlock Text="{x:Bind Reasoning, Mode=OneWay}"
+                                       TextWrapping="Wrap"
+                                       IsTextSelectionEnabled="True"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       FontSize="13" />
+                        </Expander>
+
+                        <!-- Inline tool-call cards -->
+                        <ItemsRepeater ItemsSource="{x:Bind ToolCalls, Mode=OneWay}">
+                            <ItemsRepeater.Layout>
+                                <StackLayout Spacing="6" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ToolCallVm">
+                                    <Expander HorizontalAlignment="Stretch"
+                                              HorizontalContentAlignment="Stretch">
+                                        <Expander.Header>
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <FontIcon Grid.Column="0"
+                                                          Glyph="&#xE9F5;"
+                                                          FontSize="14"
+                                                          VerticalAlignment="Center"
+                                                          Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{x:Bind Name, Mode=OneWay}"
+                                                           Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{x:Bind Progress, Mode=OneWay}"
+                                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center" />
+                                                <ProgressRing Grid.Column="3"
+                                                              Width="14" Height="14"
+                                                              IsActive="True"
+                                                              Visibility="{x:Bind app:Converters.BoolToVisible(IsRunning), Mode=OneWay}" />
+                                                <FontIcon Grid.Column="3"
+                                                          Glyph="&#xE73E;"
+                                                          FontSize="14"
+                                                          VerticalAlignment="Center"
+                                                          Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                                          Visibility="{x:Bind app:Converters.BoolToCollapsed(IsRunning), Mode=OneWay}" />
+                                            </Grid>
+                                        </Expander.Header>
+                                        <StackPanel Spacing="10">
+                                            <StackPanel Spacing="2"
+                                                        Visibility="{x:Bind app:Converters.NotEmpty(ArgumentsJson), Mode=OneWay}">
+                                                <TextBlock Text="arguments"
+                                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Text="{x:Bind ArgumentsJson, Mode=OneWay}"
+                                                           FontFamily="Consolas"
+                                                           FontSize="12"
+                                                           IsTextSelectionEnabled="True"
+                                                           TextWrapping="Wrap" />
+                                            </StackPanel>
+                                            <StackPanel Spacing="2"
+                                                        Visibility="{x:Bind app:Converters.NotEmpty(Output), Mode=OneWay}">
+                                                <TextBlock Text="output"
+                                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Text="{x:Bind Output, Mode=OneWay}"
+                                                           FontFamily="Consolas"
+                                                           FontSize="12"
+                                                           IsTextSelectionEnabled="True"
+                                                           TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Expander>
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+
+                        <TextBlock Text="{x:Bind Content, Mode=OneWay}"
+                                   TextWrapping="Wrap"
+                                   IsTextSelectionEnabled="True"
+                                   FontSize="14"
+                                   Visibility="{x:Bind app:Converters.NotEmpty(Content), Mode=OneWay}" />
+
+                        <!-- Streaming indicator only while State==Streaming -->
+                        <StackPanel Orientation="Horizontal" Spacing="6"
+                                    Visibility="{x:Bind app:Converters.BoolToVisible(IsStreaming), Mode=OneWay}">
+                            <ProgressRing Width="12" Height="12" IsActive="True" />
+                            <TextBlock Text="…thinking"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </DataTemplate>
+
+        <controls:MessageTemplateSelector x:Key="MessageSelector"
+            UserTemplate="{StaticResource UserTemplate}"
+            AssistantTemplate="{StaticResource AssistantTemplate}" />
+
+    </Page.Resources>
+
+    <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-            <FontIcon Glyph="&#xE8BD;" FontSize="28"
-                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-            <TextBlock Style="{StaticResource TitleLargeTextBlockStyle}" Text="Chat" />
-        </StackPanel>
-
-        <TextBlock Grid.Row="1"
-                   Style="{StaticResource BodyTextBlockStyle}"
-                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                   MaxWidth="640"
-                   HorizontalAlignment="Left"
-                   TextWrapping="Wrap"
-                   Text="Have a conversation with Hermes — streaming, with tool use, history, and run controls." />
-
-        <Border Grid.Row="2"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8"
-                Padding="32"
-                HorizontalAlignment="Stretch"
-                VerticalAlignment="Stretch">
-            <StackPanel Spacing="12"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center">
-                <FontIcon Glyph="&#xE7B5;" FontSize="36"
-                          Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                <TextBlock Style="{StaticResource SubtitleTextBlockStyle}"
+        <!-- Header strip -->
+        <Border Grid.Row="0"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="24,12">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                    <TextBlock Style="{StaticResource SubtitleTextBlockStyle}"
+                               Text="Chat" />
+                    <TextBlock x:Name="SessionLine"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Text="No session yet" />
+                </StackPanel>
+                <TextBlock x:Name="StatusLabel"
+                           Grid.Column="1"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           HorizontalAlignment="Center"
-                           Text="Coming soon" />
-                <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                           HorizontalAlignment="Center"
-                           Text="This surface is part of the next milestone." />
+                           Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
+                <Button Grid.Column="2"
+                        Command="{x:Bind ViewModel.NewChatCommand}"
+                        ToolTipService.ToolTip="Start a new chat">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE710;" FontSize="14" />
+                        <TextBlock Text="New chat" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- Transcript -->
+        <ScrollViewer x:Name="TranscriptScroll"
+                      Grid.Row="1"
+                      Padding="24,12,24,12"
+                      VerticalScrollMode="Enabled"
+                      VerticalScrollBarVisibility="Auto"
+                      ViewChanged="TranscriptScroll_ViewChanged">
+            <StackPanel x:Name="TranscriptContent" SizeChanged="TranscriptContent_SizeChanged">
+                <Grid x:Name="EmptyState"
+                      MinHeight="320"
+                      Visibility="{x:Bind app:Converters.BoolToCollapsed(ViewModel.HasMessages), Mode=OneWay}">
+                    <StackPanel Spacing="10"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <FontIcon Glyph="&#xE8BD;" FontSize="40"
+                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                        <TextBlock Style="{StaticResource SubtitleTextBlockStyle}"
+                                   HorizontalAlignment="Center"
+                                   Text="Start a conversation with Hermes" />
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   HorizontalAlignment="Center"
+                                   Text="Streams replies live, with tool calls rendered inline." />
+                    </StackPanel>
+                </Grid>
+
+                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Messages, Mode=OneWay}"
+                               ItemTemplate="{StaticResource MessageSelector}">
+                    <ItemsRepeater.Layout>
+                        <StackLayout Spacing="4" />
+                    </ItemsRepeater.Layout>
+                </ItemsRepeater>
             </StackPanel>
+        </ScrollViewer>
+
+        <!-- Composer -->
+        <Border Grid.Row="2"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="24,12,24,16">
+            <Grid ColumnSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBox x:Name="Composer"
+                         Grid.Column="0"
+                         PlaceholderText="Message Hermes — Enter to send, Shift+Enter for newline"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         MinHeight="56"
+                         MaxHeight="220"
+                         VerticalContentAlignment="Center"
+                         IsSpellCheckEnabled="True"
+                         Text="{x:Bind ViewModel.Composer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                         KeyDown="Composer_KeyDown" />
+
+                <Grid Grid.Column="1" VerticalAlignment="Bottom">
+                    <Button x:Name="SendButton"
+                            Style="{StaticResource AccentButtonStyle}"
+                            Command="{x:Bind ViewModel.SendCommand}"
+                            MinHeight="56"
+                            Padding="18,0"
+                            Visibility="{x:Bind app:Converters.BoolToCollapsed(ViewModel.IsBusy), Mode=OneWay}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="Send" />
+                            <FontIcon Glyph="&#xE724;" FontSize="14" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="StopButton"
+                            Command="{x:Bind ViewModel.StopCommand}"
+                            MinHeight="56"
+                            Padding="18,0"
+                            Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.IsBusy), Mode=OneWay}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE71A;" FontSize="14" />
+                            <TextBlock Text="Stop" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+            </Grid>
         </Border>
     </Grid>
 </Page>

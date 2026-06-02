@@ -43,6 +43,11 @@ public partial class App : Application
         // Timeout.InfiniteTimeSpan for SSE.
         services.AddSingleton<HermesApiClient>();
 
+        // Streaming client uses a separate HttpClient with infinite timeout —
+        // sharing the polling client's 6s timeout would kill SSE streams in
+        // 6 seconds flat.
+        services.AddSingleton<HermesStreamingClient>();
+
         return services.BuildServiceProvider();
     }
 

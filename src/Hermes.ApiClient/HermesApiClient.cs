@@ -58,6 +58,34 @@ public sealed class HermesApiClient : IDisposable
     public Task<SessionList?> GetSessionsAsync(int limit = 25, bool includeChildren = true, CancellationToken ct = default) =>
         GetJsonAsync<SessionList>($"/api/sessions?limit={limit}&include_children={(includeChildren ? "true" : "false")}", ct);
 
+    public Task<SessionDetailEnvelope?> GetSessionAsync(string id, CancellationToken ct = default) =>
+        GetJsonAsync<SessionDetailEnvelope>($"/api/sessions/{Uri.EscapeDataString(id)}", ct);
+
+    public Task<SessionMessageList?> GetSessionMessagesAsync(string id, CancellationToken ct = default) =>
+        GetJsonAsync<SessionMessageList>($"/api/sessions/{Uri.EscapeDataString(id)}/messages", ct);
+
+    public Task<SkillList?> GetSkillsAsync(CancellationToken ct = default) =>
+        GetJsonAsync<SkillList>("/v1/skills", ct);
+
+    public Task<JobList?> GetJobsAsync(CancellationToken ct = default) =>
+        GetJsonAsync<JobList>("/api/jobs", ct);
+
+    /// <summary>
+    /// Creates a fresh session that chat turns can be attached to. Hermes
+    /// auto-fills source / model from server config when omitted.
+    /// </summary>
+    public async Task<SessionDetail?> CreateSessionAsync(string? title, CancellationToken ct = default)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/sessions")
+        {
+            Content = JsonContent.Create(new CreateSessionRequest(title, "api"), options: JsonOpts),
+        };
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+        var env = await resp.Content.ReadFromJsonAsync<CreateSessionResponse>(JsonOpts, ct).ConfigureAwait(false);
+        return env?.Session;
+    }
+
     private async Task<T?> GetJsonAsync<T>(string path, CancellationToken ct)
     {
         using var response = await _http.GetAsync(path, ct).ConfigureAwait(false);
