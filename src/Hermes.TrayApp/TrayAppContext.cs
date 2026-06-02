@@ -15,6 +15,15 @@ public sealed class TrayAppContext : ApplicationContext
 {
     private const int PollIntervalMs = 5_000;
 
+    /// <summary>
+    /// Open sessions inactive for longer than this get bucketed under "Stale" in
+    /// the Sessions submenu and excluded from the headline "Open sessions" count.
+    /// They're almost always terminals the user closed without /exit, so showing
+    /// them in the main count is misleading without hiding them entirely
+    /// (sometimes they really are paused work).
+    /// </summary>
+    private static readonly TimeSpan StaleAfter = TimeSpan.FromHours(24);
+
     private readonly HermesConfig _config;
     private readonly HermesApiClient _client;
     private readonly IconRenderer _icons = new();
@@ -181,18 +190,24 @@ public sealed class TrayAppContext : ApplicationContext
 
         // Compute open sessions independently of health — even if /health/detailed
         // fails (e.g. transient timeout) we can still surface session info.
-        var openSessions = sessions?.Data?.Where(s => s.IsOpen).ToList() ?? new List<SessionSummary>();
-        var openCount = openSessions.Count;
+        var allOpen = sessions?.Data?.Where(s => s.IsOpen).ToList() ?? new List<SessionSummary>();
+        // A session with no last_active is treated as live — we have no evidence
+        // to call it stale, and hiding a session just because of missing telemetry
+        // would be the worst kind of bug ("where did my work go?").
+        var liveOpen  = allOpen.Where(s => s.SinceActive is not TimeSpan ts || ts < StaleAfter).ToList();
+        var staleOpen = allOpen.Where(s => s.SinceActive is TimeSpan ts && ts >= StaleAfter).ToList();
+        var liveCount = liveOpen.Count;
+        var staleCount = staleOpen.Count;
         var sessionsAvailable = sessions is not null;
 
         if (health is null)
         {
             status = IconRenderer.Status.Down;
-            busy = openCount > 0;
+            busy = liveCount > 0;
             headerText = "● Hermes (Unreachable)";
             gatewayText = "Gateway: " + (errorMessage ?? "no response");
             runsText = "Active runs (in gateway): —";
-            sessionsCountText = sessionsAvailable ? $"Open sessions: {openCount}" : "Open sessions: —";
+            sessionsCountText = sessionsAvailable ? FormatSessionsCount(liveCount, staleCount) : "Open sessions: —";
             tooltip = $"Hermes • unreachable\n{_config.BaseAddress}";
         }
         else
@@ -202,12 +217,11 @@ public sealed class TrayAppContext : ApplicationContext
             var gatewayRunning = string.Equals(health.GatewayState, "running", StringComparison.OrdinalIgnoreCase);
 
             // Busy if the gateway is currently servicing an agent turn, OR
-            // any external session has had activity in the last 5 seconds.
-            // The 5s window matches our poll interval — if it's longer the icon
-            // would flash off-on between polls; shorter and we'd miss bursty
-            // tool calls.
+            // any live session has had activity in the last 5 seconds. Stale
+            // sessions by definition can't satisfy the 5s window, so they
+            // don't pollute the busy indicator.
             busy = health.ActiveAgents > 0
-                || openSessions.Any(s => s.SinceActive is TimeSpan ts && ts.TotalSeconds <= 5);
+                || liveOpen.Any(s => s.SinceActive is TimeSpan ts && ts.TotalSeconds <= 5);
 
             status = (gatewayRunning, anyPlatformError) switch
             {
@@ -229,11 +243,11 @@ public sealed class TrayAppContext : ApplicationContext
             runsText = $"Active runs (in gateway): {health.ActiveAgents}"
                 + (health.ActiveAgents > 0 ? "  •" : string.Empty);
 
-            sessionsCountText = sessionsAvailable
-                ? $"Open sessions: {openCount}" + (openCount > 0 ? "  •" : string.Empty)
-                : "Open sessions: —";
+            sessionsCountText = FormatSessionsCount(liveCount, staleCount)
+                + (liveCount > 0 && busy ? "  •" : string.Empty);
 
-            tooltip = $"Hermes • {health.GatewayState} • {_modelName} • runs:{health.ActiveAgents} sessions:{(sessionsAvailable ? openCount.ToString() : "?")}";
+            var staleSuffix = staleCount > 0 ? $" (+{staleCount} stale)" : string.Empty;
+            tooltip = $"Hermes • {health.GatewayState} • {_modelName} • runs:{health.ActiveAgents} sessions:{liveCount}{staleSuffix}";
         }
 
         _notifyIcon.Icon = _icons.Get(status, busy);
@@ -246,10 +260,15 @@ public sealed class TrayAppContext : ApplicationContext
         _sessionsCountItem.Text = sessionsCountText;
 
         RebuildPlatformsSubmenu(health?.Platforms);
-        RebuildSessionsSubmenu(sessionsAvailable, openSessions);
+        RebuildSessionsSubmenu(sessionsAvailable, liveOpen, staleOpen);
     }
 
-    private void RebuildSessionsSubmenu(bool available, IReadOnlyList<SessionSummary> openSessions)
+    private static string FormatSessionsCount(int live, int stale) =>
+        stale > 0
+            ? $"Open sessions: {live}  (+{stale} stale)"
+            : $"Open sessions: {live}";
+
+    private void RebuildSessionsSubmenu(bool available, IReadOnlyList<SessionSummary> liveOpen, IReadOnlyList<SessionSummary> staleOpen)
     {
         _sessionsItem.DropDownItems.Clear();
         if (!available)
@@ -260,8 +279,12 @@ public sealed class TrayAppContext : ApplicationContext
             return;
         }
 
-        _sessionsItem.Text = $"Sessions ({openSessions.Count})";
-        if (openSessions.Count == 0)
+        var headerCount = staleOpen.Count > 0
+            ? $"{liveOpen.Count}  (+{staleOpen.Count} stale)"
+            : liveOpen.Count.ToString();
+        _sessionsItem.Text = $"Sessions ({headerCount})";
+
+        if (liveOpen.Count == 0 && staleOpen.Count == 0)
         {
             _sessionsItem.DropDownItems.Add(MakeDisabledItem("(none open)"));
             _sessionsItem.Enabled = false;
@@ -269,18 +292,37 @@ public sealed class TrayAppContext : ApplicationContext
         }
 
         _sessionsItem.Enabled = true;
-        // Most-recently-active first so the user sees what they're currently doing at the top.
-        foreach (var s in openSessions.OrderByDescending(s => s.LastActive ?? s.StartedAt ?? 0))
+
+        // Live sessions first, most-recently-active at the top.
+        foreach (var s in liveOpen.OrderByDescending(s => s.LastActive ?? s.StartedAt ?? 0))
+            _sessionsItem.DropDownItems.Add(MakeSessionMenuItem(s));
+
+        if (staleOpen.Count > 0)
         {
-            var source = (s.Source ?? "?").ToUpperInvariant();
-            var title = TruncateMiddle(string.IsNullOrWhiteSpace(s.Title) ? "(untitled)" : s.Title, 42);
-            var age = FormatAge(s.SinceActive);
-            var label = $"● {source} · {title} · {age}";
-            var item = MakeDisabledItem(label);
-            if (!string.IsNullOrWhiteSpace(s.Preview))
-                item.ToolTipText = s.Preview;
-            _sessionsItem.DropDownItems.Add(item);
+            if (liveOpen.Count > 0)
+                _sessionsItem.DropDownItems.Add(new ToolStripSeparator());
+            _sessionsItem.DropDownItems.Add(
+                MakeDisabledItem($"Stale  ({staleOpen.Count}, inactive >{(int)StaleAfter.TotalHours}h)"));
+            // Cap stale at 20 to keep the menu reasonable; the rest stay
+            // accessible via the dashboard / future Sessions UI.
+            const int staleCap = 20;
+            foreach (var s in staleOpen.OrderByDescending(s => s.LastActive ?? s.StartedAt ?? 0).Take(staleCap))
+                _sessionsItem.DropDownItems.Add(MakeSessionMenuItem(s));
+            if (staleOpen.Count > staleCap)
+                _sessionsItem.DropDownItems.Add(MakeDisabledItem($"  … and {staleOpen.Count - staleCap} more"));
         }
+    }
+
+    private static ToolStripMenuItem MakeSessionMenuItem(SessionSummary s)
+    {
+        var source = (s.Source ?? "?").ToUpperInvariant();
+        var title = TruncateMiddle(string.IsNullOrWhiteSpace(s.Title) ? "(untitled)" : s.Title, 42);
+        var age = FormatAge(s.SinceActive);
+        var label = $"● {source} · {title} · {age}";
+        var item = MakeDisabledItem(label);
+        if (!string.IsNullOrWhiteSpace(s.Preview))
+            item.ToolTipText = s.Preview;
+        return item;
     }
 
     private static string FormatAge(TimeSpan? span)
