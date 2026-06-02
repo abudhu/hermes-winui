@@ -62,10 +62,13 @@ public sealed partial class ChatPage : Page
     private static string Shorten(string id) => id.Length > 16 ? id[..16] + "…" : id;
 
     /// <summary>
-    /// Enter sends, Shift+Enter inserts a newline. We swallow the bare-Enter
-    /// keystroke so the TextBox doesn't also add the line break.
+    /// Enter sends, Shift+Enter inserts a newline. We use <c>PreviewKeyDown</c>
+    /// (tunneling) rather than <c>KeyDown</c> (bubbling) because WinUI 3's
+    /// TextBox handles Enter for newline-insertion via a class handler that
+    /// runs *before* the bubbling KeyDown event reaches us — at which point
+    /// it's too late to set <c>e.Handled = true</c> to suppress the newline.
     /// </summary>
-    private void Composer_KeyDown(object sender, KeyRoutedEventArgs e)
+    private void Composer_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key != VirtualKey.Enter) return;
 

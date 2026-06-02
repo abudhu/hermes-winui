@@ -260,7 +260,7 @@
                          VerticalContentAlignment="Center"
                          IsSpellCheckEnabled="True"
                          Text="{x:Bind ViewModel.Composer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                         KeyDown="Composer_KeyDown" />
+                         PreviewKeyDown="Composer_PreviewKeyDown" />
 
                 <Grid Grid.Column="1" VerticalAlignment="Bottom">
                     <Button x:Name="SendButton"
