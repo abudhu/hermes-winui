@@ -144,5 +144,36 @@ internal static class NativeMethods
     [return: System.Runtime.InteropServices.MarshalAs(
         System.Runtime.InteropServices.UnmanagedType.Bool)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    /// <summary>Returns the dots-per-inch (DPI) value for the specified
+    /// window. 96 == 100% scaling. Used by MainWindow to convert a
+    /// logical-pixel default size into physical pixels for AppWindow.Resize.</summary>
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [System.Runtime.InteropServices.DefaultDllImportSearchPaths(
+        System.Runtime.InteropServices.DllImportSearchPath.System32)]
+    public static extern uint GetDpiForWindow(IntPtr hWnd);
+
+    /// <summary>
+    /// Returns the user's display name as Windows knows it (full name
+    /// for Microsoft-Account-linked users, "DOMAIN\First Last" or just
+    /// "First Last" for AD users). Returns an empty string for pure
+    /// local accounts that have no display name configured. P/Invoke
+    /// signature follows the EXTENDED_NAME_FORMAT::NameDisplay (=3)
+    /// variant of <c>GetUserNameEx</c>.
+    /// </summary>
+    [System.Runtime.InteropServices.DllImport(
+        "secur32.dll",
+        CharSet = System.Runtime.InteropServices.CharSet.Unicode,
+        SetLastError = true)]
+    [System.Runtime.InteropServices.DefaultDllImportSearchPaths(
+        System.Runtime.InteropServices.DllImportSearchPath.System32)]
+    [return: System.Runtime.InteropServices.MarshalAs(
+        System.Runtime.InteropServices.UnmanagedType.Bool)]
+    public static extern bool GetUserNameExW(
+        int nameFormat,
+        System.Text.StringBuilder lpNameBuffer,
+        ref uint nSize);
+
+    public const int NameDisplay = 3;
 }
 

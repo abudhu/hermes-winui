@@ -45,10 +45,12 @@ public sealed partial class ChatPage : Page
     public ChatViewModel ViewModel { get; }
 
     /// <summary>Greeting shown on the landing surface when there are no
-    /// messages yet. Computed once in the ctor from the local time-of-day
-    /// and the Windows username (title-cased). Bound to GreetingText.Text
-    /// via direct assignment because the landing area isn't a DataTemplate.</summary>
-    public string Greeting { get; }
+    /// messages yet. Initialised synchronously in the ctor from the local
+    /// time-of-day plus a best-effort username fallback; an async refresh
+    /// later in startup upgrades it to the user's real first name when
+    /// Windows exposes one. Bound to GreetingText.Text via direct assignment
+    /// because the landing area isn't a DataTemplate.</summary>
+    public string Greeting { get; private set; }
 
     public ChatPage()
     {
@@ -57,10 +59,14 @@ public sealed partial class ChatPage : Page
         // navigation away and back. This is what makes SessionsPage's
         // "Resume conversation" handoff actually land here visibly.
         ViewModel = App.Services.GetRequiredService<ChatViewModel>();
-        Greeting = BuildGreeting();
+        Greeting = BuildGreeting(TitleCase(Environment.UserName));
 
         InitializeComponent();
         GreetingText.Text = Greeting;
+
+        // Fire-and-forget refresh: replace the synchronous fallback name
+        // with the user's actual first name once Windows responds.
+        _ = RefreshGreetingAsync();
 
         // First-render hookup. We also attach on OnNavigatedTo, but on the
         // very first construction OnNavigatedTo and the ctor both fire — the
@@ -69,10 +75,10 @@ public sealed partial class ChatPage : Page
         UpdateSessionLine();
     }
 
-    /// <summary>"Good morning, Amit · let's get something done" — time-of-day
-    /// prefix + capitalized Windows username + tagline. Falls back to a
-    /// generic phrase if the OS username is empty or unparseable.</summary>
-    private static string BuildGreeting()
+    /// <summary>"Good morning, Amit — let's get something done" — time-of-day
+    /// prefix + the supplied name + tagline. Falls back to a generic phrase
+    /// if <paramref name="name"/> is empty.</summary>
+    private static string BuildGreeting(string name)
     {
         var hour = DateTime.Now.Hour;
         var timeOfDay = hour switch
@@ -84,22 +90,105 @@ public sealed partial class ChatPage : Page
             _ => "Working late",
         };
 
-        var name = SafeUserName();
-        return string.IsNullOrEmpty(name)
+        return string.IsNullOrWhiteSpace(name)
             ? $"{timeOfDay} — let's get something done"
             : $"{timeOfDay}, {name} — let's get something done";
     }
 
-    private static string SafeUserName()
+    private static string TitleCase(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        // Single-pass title-case: capitalize first letter, lowercase rest.
+        // Deliberately doesn't try to split "first.last" or "FirstLast"
+        // forms — those land cleanly enough as-is for a greeting, and
+        // GetFirstNameAsync below will replace this with a real name when
+        // Windows exposes one.
+        return char.ToUpperInvariant(value[0]) + value[1..].ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Looks up the user's actual first name through Windows, replacing the
+    /// synchronous username fallback. Three-layer probe with progressively
+    /// weaker guarantees:
+    ///
+    /// <list type="number">
+    /// <item><c>Windows.System.User.GetPropertyAsync(KnownUserProperties.FirstName)</c>
+    /// — works for users signed in with a Microsoft Account or set up an
+    /// account profile; returns the registered first name verbatim.</item>
+    /// <item><c>GetUserNameExW(NameDisplay)</c> — Win32 fallback for AD-joined
+    /// users; returns "First Last", we split on whitespace.</item>
+    /// <item>If both come back empty, leave the title-cased username
+    /// fallback in place (don't downgrade what's already on screen).</item>
+    /// </list>
+    /// </summary>
+    private async System.Threading.Tasks.Task RefreshGreetingAsync()
+    {
+        string? firstName = null;
+        try
+        {
+            // Layer 1: WinRT User API.
+            var users = await Windows.System.User.FindAllAsync(
+                Windows.System.UserType.LocalUser,
+                Windows.System.UserAuthenticationStatus.LocallyAuthenticated);
+            foreach (var u in users)
+            {
+                var value = await u.GetPropertyAsync(Windows.System.KnownUserProperties.FirstName);
+                if (value is string s && !string.IsNullOrWhiteSpace(s))
+                {
+                    firstName = s.Trim();
+                    break;
+                }
+            }
+        }
+        catch
+        {
+            // Capability denied / no users found — fall through.
+        }
+
+        if (string.IsNullOrEmpty(firstName))
+        {
+            // Layer 2: Win32 EXTENDED_NAME_FORMAT::NameDisplay.
+            firstName = TryGetFirstNameFromWin32();
+        }
+
+        if (string.IsNullOrEmpty(firstName)) return;
+
+        var name = firstName!;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            Greeting = BuildGreeting(name);
+            if (GreetingText is not null)
+            {
+                GreetingText.Text = Greeting;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Calls GetUserNameExW with NameDisplay (=3) and returns the part
+    /// before the first whitespace. Empty string on any failure — including
+    /// the very-common-on-local-accounts case where Windows has no display
+    /// name configured and the API returns false with ERROR_NONE_MAPPED.
+    /// </summary>
+    private static string TryGetFirstNameFromWin32()
     {
         try
         {
-            var raw = Environment.UserName ?? string.Empty;
-            if (raw.Length == 0) return string.Empty;
-            // Title-case: capitalize first letter, lower-case the rest. We
-            // deliberately don't try to split CamelCase or "first.last" forms
-            // — those land cleanly enough as-is for a greeting.
-            return char.ToUpperInvariant(raw[0]) + raw[1..].ToLowerInvariant();
+            var buffer = new System.Text.StringBuilder(256);
+            uint size = (uint)buffer.Capacity;
+            if (!NativeMethods.GetUserNameExW(NativeMethods.NameDisplay, buffer, ref size))
+            {
+                return string.Empty;
+            }
+            var display = buffer.ToString();
+            if (string.IsNullOrWhiteSpace(display)) return string.Empty;
+            // Strip any "DOMAIN\" prefix if present, then take everything
+            // before the first space. AD users often come back with a
+            // domain qualifier; MSA / local profiles don't.
+            var slash = display.IndexOf('\\');
+            if (slash >= 0) display = display[(slash + 1)..];
+            var space = display.IndexOf(' ');
+            return space > 0 ? display[..space] : display;
         }
         catch
         {
@@ -201,6 +290,34 @@ public sealed partial class ChatPage : Page
         {
             ViewModel.SendCommand.Execute(null);
         }
+    }
+
+    /// <summary>
+    /// Lifts the TextBox focus signal up to the outer composer pill. The
+    /// TextBox's own focus visual (dark fill + thick accent underline) is
+    /// suppressed via brush overrides in XAML because it paints over a flat
+    /// rectangle that clashes with the pill's rounded corners. Instead we
+    /// swap the pill's border to the accent color and bump its thickness so
+    /// the user gets a clear, shape-correct focus signal.
+    /// </summary>
+    private void Composer_GotFocus(object sender, RoutedEventArgs e)
+    {
+        if (Resources.TryGetValue("AccentFillColorDefaultBrush", out var brush) ||
+            Application.Current.Resources.TryGetValue("AccentFillColorDefaultBrush", out brush))
+        {
+            ComposerPill.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)brush;
+        }
+        ComposerPill.BorderThickness = new Thickness(2);
+    }
+
+    private void Composer_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (Resources.TryGetValue("CardStrokeColorDefaultBrush", out var brush) ||
+            Application.Current.Resources.TryGetValue("CardStrokeColorDefaultBrush", out brush))
+        {
+            ComposerPill.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)brush;
+        }
+        ComposerPill.BorderThickness = new Thickness(1);
     }
 
     /// <summary>

@@ -296,7 +296,6 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                     <TextBlock Style="{StaticResource SubtitleTextBlockStyle}"
@@ -319,13 +318,7 @@
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </Border>
-                <TextBlock x:Name="StatusLabel"
-                           Grid.Column="2"
-                           Style="{StaticResource CaptionTextBlockStyle}"
-                           VerticalAlignment="Center"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
-                <Button Grid.Column="3"
+                <Button Grid.Column="2"
                         Command="{x:Bind ViewModel.NewChatCommand}"
                         ToolTipService.ToolTip="Start a new chat">
                     <StackPanel Orientation="Horizontal" Spacing="6">
@@ -494,53 +487,91 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Composer -->
-        <Border Grid.Row="2"
-                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-                BorderThickness="0,1,0,0"
-                Padding="24,12,24,16">
-            <Grid ColumnSpacing="10">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+        <!-- Composer: rounded "pill" with the textbox and a circular send
+             button embedded inside. Floats center-aligned with a max-width
+             rather than spanning the full width as a docked strip — feels
+             modern (matches ChatGPT/Copilot) and pairs naturally with the
+             Mica backdrop bleeding through on either side. -->
+        <Grid Grid.Row="2" Padding="0,8,0,18">
+            <Border x:Name="ComposerPill"
+                    MaxWidth="760"
+                    HorizontalAlignment="Stretch"
+                    Margin="24,0,24,0"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="22"
+                    Padding="18,14,10,14">
+                <Grid ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-                <TextBox x:Name="Composer"
-                         Grid.Column="0"
-                         PlaceholderText="Message Hermes — Enter to send, Shift+Enter for newline"
-                         AcceptsReturn="True"
-                         TextWrapping="Wrap"
-                         MinHeight="56"
-                         MaxHeight="220"
-                         VerticalContentAlignment="Center"
-                         IsSpellCheckEnabled="True"
-                         Text="{x:Bind ViewModel.Composer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                         PreviewKeyDown="Composer_PreviewKeyDown" />
+                    <!-- BorderThickness=0 + Background=Transparent makes the
+                         TextBox blend into the outer pill. We override the
+                         TextBox's focus/hover-state brushes to Transparent so
+                         clicking in doesn't paint a dark fill + accent
+                         underline inside our rounded shape. Focus signal is
+                         instead lifted to the outer pill border via
+                         GotFocus/LostFocus in code-behind. -->
+                    <TextBox x:Name="Composer"
+                             Grid.Column="0"
+                             PlaceholderText="Message Hermes — Enter to send, Shift+Enter for newline"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             Padding="4,6,4,6"
+                             MinHeight="56"
+                             MaxHeight="280"
+                             VerticalContentAlignment="Center"
+                             VerticalAlignment="Stretch"
+                             IsSpellCheckEnabled="True"
+                             Text="{x:Bind ViewModel.Composer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             PreviewKeyDown="Composer_PreviewKeyDown"
+                             GotFocus="Composer_GotFocus"
+                             LostFocus="Composer_LostFocus">
+                        <TextBox.Resources>
+                            <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                            <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                        </TextBox.Resources>
+                    </TextBox>
 
-                <Grid Grid.Column="1" VerticalAlignment="Bottom">
-                    <Button x:Name="SendButton"
-                            Style="{StaticResource AccentButtonStyle}"
-                            Command="{x:Bind ViewModel.SendCommand}"
-                            MinHeight="56"
-                            Padding="18,0"
-                            Visibility="{x:Bind app:Converters.BoolToCollapsed(ViewModel.IsBusy), Mode=OneWay}">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock Text="Send" />
-                            <FontIcon Glyph="&#xE724;" FontSize="14" />
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="StopButton"
-                            Command="{x:Bind ViewModel.StopCommand}"
-                            MinHeight="56"
-                            Padding="18,0"
-                            Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.IsBusy), Mode=OneWay}">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon Glyph="&#xE71A;" FontSize="14" />
-                            <TextBlock Text="Stop" />
-                        </StackPanel>
-                    </Button>
+                    <!-- Send/Stop swap based on ViewModel.IsBusy. Both are
+                         circular (CornerRadius=18 on a 36×36 button) and
+                         dock to the bottom of the pill so a multi-line
+                         composer keeps the button aligned with the last
+                         line of typed text. -->
+                    <Grid Grid.Column="1" VerticalAlignment="Bottom">
+                        <Button x:Name="SendButton"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Width="36" Height="36"
+                                MinWidth="36" MinHeight="36"
+                                Padding="0"
+                                CornerRadius="18"
+                                Command="{x:Bind ViewModel.SendCommand}"
+                                ToolTipService.ToolTip="Send (Enter)"
+                                Visibility="{x:Bind app:Converters.BoolToCollapsed(ViewModel.IsBusy), Mode=OneWay}">
+                            <FontIcon Glyph="&#xE74A;" FontSize="14" />
+                        </Button>
+                        <Button x:Name="StopButton"
+                                Width="36" Height="36"
+                                MinWidth="36" MinHeight="36"
+                                Padding="0"
+                                CornerRadius="18"
+                                Command="{x:Bind ViewModel.StopCommand}"
+                                ToolTipService.ToolTip="Stop"
+                                Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.IsBusy), Mode=OneWay}">
+                            <FontIcon Glyph="&#xE71A;" FontSize="12" />
+                        </Button>
+                    </Grid>
                 </Grid>
-            </Grid>
-        </Border>
+            </Border>
+        </Grid>
     </Grid>
 </Page>

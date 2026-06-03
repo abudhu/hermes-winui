@@ -4,11 +4,20 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Animation;
+using Windows.Graphics;
 
 namespace Hermes.App;
 
 public sealed partial class MainWindow : Window
 {
+    /// <summary>Initial window size in logical (DIP) pixels, used only when
+    /// no saved state exists from a prior session. Sized to feel at home on
+    /// a 1080p laptop without dominating the screen — the chat surface still
+    /// gets ~880px wide with the 220px nav rail visible. <see cref="WindowStateManager"/>
+    /// converts this to physical pixels using the current window's DPI before
+    /// calling <see cref="AppWindow.Resize"/>.</summary>
+    private static readonly SizeInt32 DefaultLogicalSize = new(1100, 720);
+
     public MainWindow()
     {
         InitializeComponent();
@@ -17,6 +26,16 @@ public sealed partial class MainWindow : Window
         SetTitleBar(AppTitleBar);
         AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
         AppWindow.SetIcon("Assets/AppIcon.ico");
+
+        // Restore size/position from the prior session (falls back to
+        // DefaultLogicalSize when this is a fresh install).
+        WindowStateManager.Apply(this, DefaultLogicalSize);
+
+        // Save on close. Window.Closed fires for normal close paths
+        // (X button, Alt+F4, programmatic Close); process kill or crash
+        // skips it, which means we lose changes since the last save —
+        // acceptable trade-off for not having to debounce on every drag.
+        Closed += (_, _) => WindowStateManager.Save(this);
     }
 
     private void TitleBar_PaneToggleRequested(TitleBar sender, object args)
