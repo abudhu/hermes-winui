@@ -105,12 +105,26 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0"
                                                Text="{x:Bind Title}"
                                                Style="{StaticResource BodyStrongTextBlockStyle}"
                                                TextTrimming="CharacterEllipsis" />
-                                    <Border Grid.Column="1"
+                                    <!-- Content-match indicator. Visible only when this row
+                                         surfaced because of an FTS5 hit on message content
+                                         (vs. a metadata match on title/preview/model). The
+                                         chat-bubble glyph + tooltip together explain why
+                                         a session the user doesn't recognise by title is
+                                         in their results. -->
+                                    <FontIcon Grid.Column="1"
+                                              Glyph="&#xE8BD;"
+                                              FontSize="12"
+                                              VerticalAlignment="Center"
+                                              Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                              ToolTipService.ToolTip="Matched message content"
+                                              Visibility="{x:Bind app:Converters.BoolToVisible(IsContentMatch)}" />
+                                    <Border Grid.Column="2"
                                             Background="{ThemeResource SubtleFillColorSecondaryBrush}"
                                             CornerRadius="4"
                                             Padding="6,1">
@@ -119,7 +133,7 @@
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     </Border>
                                 </Grid>
-                                <TextBlock Text="{x:Bind Preview}"
+                                <TextBlock Text="{x:Bind DisplaySnippet}"
                                            Style="{StaticResource CaptionTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            MaxLines="1"
