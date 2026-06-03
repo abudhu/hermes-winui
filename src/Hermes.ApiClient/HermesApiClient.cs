@@ -71,6 +71,40 @@ public sealed class HermesApiClient : IDisposable
     public Task<SessionMessageList?> GetSessionMessagesAsync(string id, CancellationToken ct = default) =>
         GetJsonAsync<SessionMessageList>($"/api/sessions/{Uri.EscapeDataString(id)}/messages", ct);
 
+    /// <summary>
+    /// Full-text search across stored session messages. The gateway runs
+    /// an FTS5 query with auto-added prefix wildcards (so "scroll" matches
+    /// "scrollbar") and dedupes hits by compression lineage so one logical
+    /// chat doesn't appear as N rows. Empty / whitespace queries short-
+    /// circuit to an empty result envelope without hitting the server —
+    /// the gateway behaves the same way, but we save the round-trip.
+    /// </summary>
+    /// <param name="query">User-typed search string. Will be URL-encoded.</param>
+    /// <param name="limit">Maximum number of distinct conversations to
+    /// return. Clamped to [1, 200] so a runaway caller can't ask the
+    /// gateway for the whole corpus.</param>
+    public Task<SessionSearchResponse?> SearchSessionsAsync(string query, int limit = 20, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return Task.FromResult<SessionSearchResponse?>(new SessionSearchResponse([]));
+        }
+        return GetJsonAsync<SessionSearchResponse>(BuildSearchPath(query, limit), ct);
+    }
+
+    /// <summary>
+    /// Builds the <c>/api/sessions/search</c> path with the user query
+    /// URL-encoded and the limit clamped to a sensible range. Extracted
+    /// (and made <c>internal</c>) so URL-building can be unit-tested
+    /// without standing up an HttpClient with a routable BaseAddress.
+    /// </summary>
+    internal static string BuildSearchPath(string query, int limit)
+    {
+        var clampedLimit = Math.Clamp(limit, 1, 200);
+        var escapedQuery = Uri.EscapeDataString(query.Trim());
+        return $"/api/sessions/search?q={escapedQuery}&limit={clampedLimit}";
+    }
+
     public Task<SkillList?> GetSkillsAsync(CancellationToken ct = default) =>
         GetJsonAsync<SkillList>("/v1/skills", ct);
 
