@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,6 +9,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Hermes.ApiClient;
 using Hermes.ApiClient.Models;
+using Hermes.App.Services;
 using Microsoft.UI.Dispatching;
 
 namespace Hermes.App.ViewModels;
@@ -121,6 +123,19 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     /// only when the gateway provides it.</summary>
     [ObservableProperty]
     public partial double? SessionCostUsd { get; set; }
+
+    /// <summary>Transient feedback string for the export overflow menu —
+    /// e.g. "Copied!" after CopyAsMarkdown succeeds. Bound to a small
+    /// inline pill in the chat header; cleared on a dispatcher timer
+    /// after ~1.5s and on NewChat so a stale confirmation never sticks
+    /// around across navigations.</summary>
+    [ObservableProperty]
+    public partial string ExportConfirmation { get; set; } = string.Empty;
+
+    /// <summary>Timer that clears <see cref="ExportConfirmation"/> after a
+    /// short delay. Lazily created so the VM doesn't pay for it before the
+    /// user actually uses the export menu.</summary>
+    private DispatcherQueueTimer? _exportConfirmationTimer;
 
     /// <summary>Formatted one-liner shown in the chat header strip.
     /// Empty when there's no usage to display.</summary>
@@ -257,7 +272,18 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         _stream = stream;
         _config = config;
         _dispatcher = dispatcher;
-        Messages.CollectionChanged += (_, __) => OnPropertyChanged(nameof(HasMessages));
+        Messages.CollectionChanged += (_, __) =>
+        {
+            OnPropertyChanged(nameof(HasMessages));
+            // Export commands gate on HasMessages — an empty transcript
+            // can't be exported, so the menu items disable themselves.
+            // We also re-raise CanExport so the header's "Export" button
+            // IsEnabled binding refreshes (commands track their own
+            // CanExecute internally, but the IsEnabled binding does not).
+            OnPropertyChanged(nameof(CanExport));
+            CopyAsMarkdownCommand.NotifyCanExecuteChanged();
+            SaveAsMarkdownCommand.NotifyCanExecuteChanged();
+        };
         // SelectedModelDisplay reads from AvailableModels — re-raise on
         // membership change so the read-only chip's text refreshes when
         // EnsureSelectedModelPresent adds a synthetic entry.
@@ -277,6 +303,12 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     {
         SendCommand.NotifyCanExecuteChanged();
         StopCommand.NotifyCanExecuteChanged();
+        // Export commands gate on !IsBusy — exporting mid-stream would
+        // capture a partial assistant turn that lags the visible content
+        // by up to one flush tick.
+        OnPropertyChanged(nameof(CanExport));
+        CopyAsMarkdownCommand.NotifyCanExecuteChanged();
+        SaveAsMarkdownCommand.NotifyCanExecuteChanged();
         // Picker locks while a send is in flight so the user can't change
         // model between EnsureSessionAsync read and the server response.
         OnPropertyChanged(nameof(CanPickModel));
@@ -399,6 +431,10 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         SessionUsage = null;
         SessionCostUsd = null;
         _seenRunIds.Clear();
+        // Don't carry a stale "Copied!" pill from the prior chat into the
+        // fresh one — it would otherwise sit there until the 1.5s timer
+        // happens to fire.
+        ClearExportConfirmation();
 
         // Drop any synthetic entries left over from a prior resume; the
         // picker is now re-enabled for a fresh chat and stale "(unavailable)"
@@ -421,6 +457,125 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         EnsureSelectedModelPresent();
 
         StatusText = "Ready";
+    }
+
+    // -------------------------------------------------------------------
+    // Export commands
+    // -------------------------------------------------------------------
+
+    /// <summary>True when there's something worth exporting AND we're not
+    /// mid-stream. Mid-stream export would capture an assistant turn whose
+    /// <see cref="MessageVm.Content"/> still trails the flush buffer by up
+    /// to one tick — disabling here keeps the UX honest.</summary>
+    public bool CanExport => HasMessages && !IsBusy;
+
+    /// <summary>
+    /// Renders the transcript as Markdown and writes it to the clipboard.
+    /// Sets a transient "Copied!" confirmation visible in the chat header;
+    /// the confirmation self-clears after ~1.5s.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanExport))]
+    private void CopyAsMarkdown()
+    {
+        var markdown = BuildExportMarkdown();
+        try
+        {
+            var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            pkg.SetText(markdown);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
+            FlashExportConfirmation("Copied to clipboard");
+        }
+        catch (Exception ex)
+        {
+            // Clipboard contention happens occasionally (another app holds
+            // the clipboard, RDP weirdness, etc.). Surface it through the
+            // same pill rather than throwing into the UI — the user can
+            // just retry.
+            FlashExportConfirmation($"Copy failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Renders the transcript as Markdown and prompts the user for a save
+    /// location via <see cref="Windows.Storage.Pickers.FileSavePicker"/>.
+    /// Reads the main-window handle from <see cref="App.MainWindow"/> for
+    /// the WinUI 3 <c>InitializeWithWindow</c> dance — packaged WinUI
+    /// apps require a window association on every file picker.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanExport))]
+    private async Task SaveAsMarkdownAsync()
+    {
+        var markdown = BuildExportMarkdown();
+
+        var window = App.MainWindow;
+        if (window is null)
+        {
+            // Should never happen — MainWindow is set in App.OnLaunched
+            // before any page is constructed. Defensive: surface to user
+            // rather than crash.
+            FlashExportConfirmation("Save failed: no window");
+            return;
+        }
+
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FileSavePicker
+            {
+                SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.DocumentsLibrary,
+                SuggestedFileName = MarkdownExporter.SanitizeFileName(SessionTitle),
+            };
+            picker.FileTypeChoices.Add("Markdown", new List<string> { ".md" });
+
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+
+            var file = await picker.PickSaveFileAsync();
+            if (file is null) return; // user cancelled — silent no-op
+
+            await Windows.Storage.FileIO.WriteTextAsync(file, markdown);
+            FlashExportConfirmation($"Saved {file.Name}");
+        }
+        catch (Exception ex)
+        {
+            FlashExportConfirmation($"Save failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Composes the export snapshot from the current VM state.
+    /// Pulled into a helper so both Copy and Save go through the same
+    /// formatter — guarantees they always produce identical output.</summary>
+    private string BuildExportMarkdown()
+    {
+        var input = MarkdownExporter.FromViewModel(
+            title: SessionTitle,
+            sessionId: SessionId,
+            model: SelectedModelDisplay,
+            usage: SessionUsage,
+            messages: Messages);
+        return MarkdownExporter.Render(input);
+    }
+
+    /// <summary>Shows a transient confirmation pill for ~1.5s, then clears
+    /// it. Always restarts the timer so a rapid second click extends the
+    /// visible window rather than two pills fighting.</summary>
+    private void FlashExportConfirmation(string message)
+    {
+        ExportConfirmation = message;
+        if (_exportConfirmationTimer is null)
+        {
+            _exportConfirmationTimer = _dispatcher.CreateTimer();
+            _exportConfirmationTimer.IsRepeating = false;
+            _exportConfirmationTimer.Interval = TimeSpan.FromMilliseconds(1500);
+            _exportConfirmationTimer.Tick += (_, _) => ExportConfirmation = string.Empty;
+        }
+        _exportConfirmationTimer.Stop();
+        _exportConfirmationTimer.Start();
+    }
+
+    private void ClearExportConfirmation()
+    {
+        _exportConfirmationTimer?.Stop();
+        ExportConfirmation = string.Empty;
     }
 
     /// <summary>

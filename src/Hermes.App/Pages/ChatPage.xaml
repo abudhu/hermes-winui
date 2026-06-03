@@ -388,14 +388,69 @@
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </Border>
-                <Button Grid.Column="3"
-                        Command="{x:Bind ViewModel.NewChatCommand}"
-                        ToolTipService.ToolTip="Start a new chat">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <FontIcon Glyph="&#xE710;" FontSize="14" />
-                        <TextBlock Text="New chat" />
-                    </StackPanel>
-                </Button>
+                <!-- Export pill + Export menu + New chat as a single
+                     horizontal cluster — Export and New chat sit side by
+                     side, with the transient "Copied!" pill floating to
+                     the left of them when an export just ran. -->
+                <StackPanel Grid.Column="3"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            VerticalAlignment="Center">
+                    <Border Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                            BorderBrush="{ThemeResource SystemFillColorSuccessBrush}"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Padding="8,3"
+                            VerticalAlignment="Center"
+                            IsHitTestVisible="False"
+                            Visibility="{x:Bind app:Converters.NotEmpty(ViewModel.ExportConfirmation), Mode=OneWay}">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <FontIcon Glyph="&#xE73E;" FontSize="11"
+                                      Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
+                            <TextBlock Text="{x:Bind ViewModel.ExportConfirmation, Mode=OneWay}"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Button ToolTipService.ToolTip="Export this chat"
+                            IsEnabled="{x:Bind ViewModel.CanExport, Mode=OneWay}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <!-- &#xEDE1; reads as "share/send-out", which fits
+                                 export better than a generic ellipsis. The tiny
+                                 chevron on the right (&#xE70D;) signals there's
+                                 a flyout — matches MenuFlyout conventions in the
+                                 Fluent design language. -->
+                            <FontIcon Glyph="&#xEDE1;" FontSize="14" />
+                            <TextBlock Text="Export" />
+                            <FontIcon Glyph="&#xE70D;" FontSize="9" Margin="2,1,0,0" />
+                        </StackPanel>
+                        <Button.Flyout>
+                            <MenuFlyout Placement="Bottom">
+                                <MenuFlyoutItem Text="Copy as markdown"
+                                                Command="{x:Bind ViewModel.CopyAsMarkdownCommand}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8C8;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Save as .md…"
+                                                Command="{x:Bind ViewModel.SaveAsMarkdownCommand}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE74E;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
+
+                    <Button Command="{x:Bind ViewModel.NewChatCommand}"
+                            ToolTipService.ToolTip="Start a new chat">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE710;" FontSize="14" />
+                            <TextBlock Text="New chat" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
             </Grid>
         </Border>
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Markdig;
+using Markdig.Extensions.Mathematics;
 using Markdig.Extensions.Tables;
 using Markdig.Extensions.TaskLists;
 using Markdig.Syntax;
@@ -13,6 +14,12 @@ using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI.Text;
 using Windows.System;
+
+// MathBlock and MathInline ship under Markdig.Extensions.Mathematics and
+// collide with our local MathBlock helper class. Alias the Markdig types
+// so the pattern-matching arms above stay readable.
+using MarkdigMathBlock = Markdig.Extensions.Mathematics.MathBlock;
+using MarkdigMathInline = Markdig.Extensions.Mathematics.MathInline;
 
 namespace Hermes.App.Markdown;
 
@@ -40,6 +47,10 @@ public static class MarkdownRenderer
         .UsePipeTables()
         .UseTaskLists()
         .UseAutoLinks()
+        // Math turns $$...$$ into MathBlock and $...$ into MathInline.
+        // Without this, KaTeX-style math reaches the renderer as plain
+        // text and the user sees raw dollar signs.
+        .UseMathematics()
         .Build();
 
     /// <summary>Font fallback chain for inline and block code. Cached as a
@@ -67,6 +78,12 @@ public static class MarkdownRenderer
     {
         HeadingBlock h            => RenderHeading(h),
         ParagraphBlock p          => RenderParagraph(p),
+        // MathBlock inherits from FencedCodeBlock so it must come BEFORE
+        // the FencedCodeBlock arm — otherwise pattern matching dispatches
+        // every $$...$$ block to the code-fence renderer. Both the Markdig
+        // type and our helper class are named MathBlock; we use the alias
+        // MarkdigMathBlock (see using block) to disambiguate.
+        MarkdigMathBlock mb       => MathBlock.Build(JoinCodeLines(mb.Lines)),
         FencedCodeBlock fc        => RenderFencedCode(fc, highlight),
         CodeBlock cb              => RenderIndentedCode(cb),
         QuoteBlock q              => RenderQuote(q, highlight),
@@ -107,12 +124,32 @@ public static class MarkdownRenderer
 
     private static UIElement RenderFencedCode(FencedCodeBlock fc, bool highlight)
     {
+        // ```mermaid (case-insensitive, first whitespace-separated token of
+        // the info string so ```mermaid title="foo" also matches) gets the
+        // dedicated card with the "Open in mermaid.live" launch button.
+        var infoFirstToken = FirstWord(fc.Info);
+        if (string.Equals(infoFirstToken, "mermaid", StringComparison.OrdinalIgnoreCase))
+        {
+            return MermaidBlock.Build(JoinCodeLines(fc.Lines));
+        }
+
         return new Hermes.App.Controls.CodeBlockControl
         {
             Code = JoinCodeLines(fc.Lines),
             CodeLanguage = fc.Info ?? "",
             HighlightEnabled = highlight,
         };
+    }
+
+    /// <summary>First whitespace-separated token of a fenced-code info
+    /// string, trimmed and lowercased. Used to identify language fences
+    /// that allow extra metadata (e.g. ````mermaid title="x"```).</summary>
+    private static string FirstWord(string? info)
+    {
+        if (string.IsNullOrWhiteSpace(info)) return string.Empty;
+        var trimmed = info!.TrimStart();
+        var space = trimmed.IndexOfAny(new[] { ' ', '\t' });
+        return space < 0 ? trimmed : trimmed.Substring(0, space);
     }
 
     private static UIElement RenderIndentedCode(CodeBlock cb)
@@ -191,7 +228,10 @@ public static class MarkdownRenderer
 
     private static UIElement RenderTable(Table t)
     {
-        var grid = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+        // No outer margin on the grid — the wrapping ScrollViewer carries
+        // the vertical spacing so the scroller's track aligns flush with
+        // adjacent blocks rather than indenting at the top/bottom.
+        var grid = new Grid();
         // One column per Markdig column descriptor; fall back to scanning
         // the widest row if descriptors are absent.
         int cols = t.ColumnDefinitions.Count;
@@ -235,11 +275,24 @@ public static class MarkdownRenderer
             }
             rowIndex++;
         }
-        return new Border
+        return new ScrollViewer
         {
-            BorderBrush = (Brush)Application.Current.Resources["DividerStrokeColorDefaultBrush"],
-            BorderThickness = new Thickness(1, 1, 0, 0),
-            Child = grid,
+            // Wrap the table in a horizontal scroller so wide tables don't
+            // overflow the 720px assistant bubble. Vertical scroll is
+            // explicitly OFF so wheel events bubble up to the outer
+            // transcript scroller — without this the inner scroller eats
+            // wheel input whenever the pointer is over a table.
+            HorizontalScrollMode = ScrollMode.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollMode = ScrollMode.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Margin = new Thickness(0, 4, 0, 4),
+            Content = new Border
+            {
+                BorderBrush = (Brush)Application.Current.Resources["DividerStrokeColorDefaultBrush"],
+                BorderThickness = new Thickness(1, 1, 0, 0),
+                Child = grid,
+            },
         };
     }
 
@@ -369,6 +422,33 @@ public static class MarkdownRenderer
             case HtmlInline hi:
                 target.Add(MakeRun(hi.Tag, baseFontSize, semibold));
                 break;
+
+            case MarkdigMathInline mi:
+                {
+                    // Inline math can't host a card — it lives inside a
+                    // RichTextBlock paragraph's inlines. Best we can do is
+                    // mark it visually so the user sees it's LaTeX, not a
+                    // typo. The "ƒ" prefix mirrors the block-math header
+                    // icon for consistency.
+                    var marker = new Run
+                    {
+                        Text = "ƒ ",
+                        FontFamily = new FontFamily("Cambria Math, Cambria, serif"),
+                        FontStyle = FontStyle.Italic,
+                        FontSize = baseFontSize,
+                        Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"],
+                    };
+                    var body = new Run
+                    {
+                        Text = mi.Content.ToString(),
+                        FontFamily = MonospaceFont,
+                        FontSize = baseFontSize - 1,
+                        Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"],
+                    };
+                    target.Add(marker);
+                    target.Add(body);
+                    break;
+                }
 
             case ContainerInline ci:
                 foreach (var child in ci)
