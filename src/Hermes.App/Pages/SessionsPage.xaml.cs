@@ -44,6 +44,12 @@ public sealed partial class SessionsPage : Page
         // in XAML via x:Bind) so the binding evaluates exactly once after
         // the page is initialised, with the live ObservableCollection.
         GroupedSessionsSource.Source = Groups;
+
+        // Cancel + dispose the in-flight detail load when the page goes
+        // away. Without this, a CTS created with a timeout keeps an
+        // internal Timer alive that holds the CTS (and its registered
+        // callbacks) for up to 10s after navigation.
+        Unloaded += (_, _) => DisposeDetailCts();
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -177,7 +183,12 @@ public sealed partial class SessionsPage : Page
         }
         _selectedRow = row;
 
-        _detailCts?.Cancel();
+        // Replace the previous in-flight load. The previous CTS is created
+        // with a 10s timeout, which spins up an internal Timer that keeps
+        // the CTS rooted until the timeout fires. We have to dispose it
+        // explicitly when the user moves on, otherwise rapid selection
+        // changes leak one CTS+Timer per click.
+        DisposeDetailCts();
         _detailCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var ct = _detailCts.Token;
 
@@ -214,10 +225,24 @@ public sealed partial class SessionsPage : Page
                 foreach (var m in msgs) Messages.Add(MessageRowVm.FromMessage(m));
             }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // User selected a different session before this one finished
+            // loading. No-op — the new selection will populate the panel.
+        }
         catch (Exception ex)
         {
             Messages.Add(new MessageRowVm("system", $"Could not load: {ex.Message}", DateTimeOffset.Now));
         }
+    }
+
+    private void DisposeDetailCts()
+    {
+        var cts = _detailCts;
+        if (cts is null) return;
+        _detailCts = null;
+        try { cts.Cancel(); } catch (ObjectDisposedException) { }
+        cts.Dispose();
     }
 
     /// <summary>Hands the selected session over to ChatViewModel and switches
