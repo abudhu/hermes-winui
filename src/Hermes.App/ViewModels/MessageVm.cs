@@ -27,8 +27,11 @@ public sealed partial class MessageVm : ObservableObject
 
     public MessageRole Role { get; init; }
 
-    /// <summary>Timestamp captured locally when the message was created.</summary>
-    public DateTimeOffset Timestamp { get; } = DateTimeOffset.Now;
+    /// <summary>Timestamp this message was authored. For new messages this
+    /// defaults to <see cref="DateTimeOffset.Now"/>; for messages hydrated
+    /// from server history (<c>ResumeSessionAsync</c>) it's the persisted
+    /// timestamp converted from epoch seconds.</summary>
+    public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.Now;
 
     /// <summary>
     /// Playful spinner label shown while this message is streaming

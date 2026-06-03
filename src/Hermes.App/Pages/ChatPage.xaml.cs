@@ -1,6 +1,6 @@
 using System;
+using System.Collections.Specialized;
 using System.ComponentModel;
-using Hermes.ApiClient;
 using Hermes.App.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
@@ -20,27 +20,65 @@ public sealed partial class ChatPage : Page
     private bool _stickToBottom = true;
     private bool _suppressViewChanged;
 
+    /// <summary>True while we're subscribed to ViewModel events. Tracks
+    /// attach/detach across OnNavigatedTo / OnNavigatedFrom so we don't
+    /// double-subscribe (the VM is a DI singleton; the page is recreated
+    /// on every navigation and would otherwise pile on handlers).</summary>
+    private bool _attached;
+
     public ChatViewModel ViewModel { get; }
 
     public ChatPage()
     {
-        ViewModel = new ChatViewModel(
-            App.Services.GetRequiredService<HermesApiClient>(),
-            App.Services.GetRequiredService<HermesStreamingClient>(),
-            Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
-
-        ViewModel.Messages.CollectionChanged += (_, __) => UpdateSessionLine();
-        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        // Resolve from the singleton container so the VM's state (active
+        // SessionId, in-progress stream, current transcript) survives
+        // navigation away and back. This is what makes SessionsPage's
+        // "Resume conversation" handoff actually land here visibly.
+        ViewModel = App.Services.GetRequiredService<ChatViewModel>();
 
         InitializeComponent();
+
+        // First-render hookup. We also attach on OnNavigatedTo, but on the
+        // very first construction OnNavigatedTo and the ctor both fire — the
+        // _attached guard keeps us from double-subscribing in that case.
+        AttachViewModelEvents();
+        UpdateSessionLine();
+    }
+
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        AttachViewModelEvents();
+        // Reflect any state changes that landed while the page was unloaded
+        // (e.g. SessionsPage just called ResumeSessionAsync on the VM).
         UpdateSessionLine();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
-        // Don't dispose — page may navigate back. Leave the stream running.
+        // Detach so the singleton VM doesn't hold a reference to a stale
+        // page instance — the Frame will recreate the page on next nav.
+        DetachViewModelEvents();
     }
+
+    private void AttachViewModelEvents()
+    {
+        if (_attached) return;
+        ViewModel.Messages.CollectionChanged += ViewModel_MessagesChanged;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        _attached = true;
+    }
+
+    private void DetachViewModelEvents()
+    {
+        if (!_attached) return;
+        ViewModel.Messages.CollectionChanged -= ViewModel_MessagesChanged;
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        _attached = false;
+    }
+
+    private void ViewModel_MessagesChanged(object? sender, NotifyCollectionChangedEventArgs e) => UpdateSessionLine();
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -113,3 +151,4 @@ public sealed partial class ChatPage : Page
         });
     }
 }
+

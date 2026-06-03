@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -29,6 +30,15 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
 
     /// <summary>Independent CTS for the active stream — cancelled by Stop or NewChat.</summary>
     private CancellationTokenSource? _streamCts;
+
+    /// <summary>
+    /// The currently-running SendAsync task, captured so other operations
+    /// (ResumeSessionAsync, NewChat) can cancel the stream AND wait for the
+    /// finally block to fully unwind before mutating shared state. Without
+    /// this, Send's finally would race Resume's setup and overwrite IsBusy /
+    /// _currentAssistant mid-load.
+    /// </summary>
+    private Task? _currentStreamTask;
 
     /// <summary>
     /// Coalesces assistant token flushes. We append to <c>MessageVm.Buffer</c>
@@ -80,6 +90,16 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
 
     [RelayCommand(CanExecute = nameof(CanSend))]
     private async Task SendAsync()
+    {
+        // Capture the inner task so ResumeSessionAsync / NewChat can await
+        // it after cancelling, ensuring the finally block has fully torn
+        // down state before they start setting up theirs.
+        _currentStreamTask = SendCoreAsync();
+        try { await _currentStreamTask; }
+        finally { _currentStreamTask = null; }
+    }
+
+    private async Task SendCoreAsync()
     {
         var text = (Composer ?? string.Empty).Trim();
         if (text.Length == 0) return;
@@ -200,6 +220,105 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         Messages.Clear();
         SessionId = null;
         SessionTitle = null;
+        StatusText = "Ready";
+    }
+
+    /// <summary>
+    /// Loads a server-side session's history into the transcript and adopts
+    /// its <see cref="SessionId"/> so subsequent sends continue the same
+    /// conversation. Safe to call mid-stream — it cancels the in-flight
+    /// stream and waits for its finally block to unwind before mutating
+    /// shared state (otherwise Send's finally races Resume's setup).
+    /// </summary>
+    /// <param name="sessionId">The server session id to resume.</param>
+    public async Task ResumeSessionAsync(string sessionId)
+    {
+        if (string.IsNullOrEmpty(sessionId)) return;
+
+        // 1. Cancel any in-flight stream AND wait for it to fully unwind so
+        //    its finally block (which mutates IsBusy / _currentAssistant)
+        //    runs before we start our own setup.
+        _streamCts?.Cancel();
+        if (_currentStreamTask is { } prior)
+        {
+            try { await prior.ConfigureAwait(true); }
+            catch { /* swallowed: SendAsync owns its own error reporting */ }
+        }
+
+        IsBusy = true;
+        StatusText = "Loading session…";
+
+        // 2. Fetch into LOCAL variables first so a fetch failure doesn't
+        //    leave the UI showing a cleared transcript bound to a session
+        //    that we couldn't actually load.
+        SessionDetailEnvelope? detail;
+        SessionMessageList? msgs;
+        try
+        {
+            var detailTask = _api.GetSessionAsync(sessionId, CancellationToken.None);
+            var msgsTask = _api.GetSessionMessagesAsync(sessionId, CancellationToken.None);
+            await Task.WhenAll(detailTask, msgsTask).ConfigureAwait(true);
+            detail = detailTask.Result;
+            msgs = msgsTask.Result;
+        }
+        catch (Exception ex)
+        {
+            // Leave current transcript / SessionId untouched on failure so
+            // the user's prior chat state is preserved and they can retry.
+            StatusText = $"Could not load session: {ex.Message}";
+            IsBusy = false;
+            return;
+        }
+
+        // 3. Hydrate VMs from server messages. Only user/assistant turns are
+        //    rendered: the message-list API doesn't carry enough info
+        //    (original tool args) to faithfully reconstruct tool cards yet.
+        //    Reasoning, where present, is preserved on the assistant VM.
+        var hydrated = new System.Collections.Generic.List<MessageVm>();
+        if (msgs?.Data is { } rows)
+        {
+            foreach (var m in rows.OrderBy(r => r.Timestamp ?? 0))
+            {
+                MessageRole role;
+                if (string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))
+                    role = MessageRole.User;
+                else if (string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                    role = MessageRole.Assistant;
+                else
+                    continue;
+
+                var ts = m.Timestamp is double t
+                    ? DateTimeOffset.FromUnixTimeMilliseconds((long)(t * 1000))
+                    : DateTimeOffset.Now;
+
+                var vm = new MessageVm
+                {
+                    Role = role,
+                    Content = m.Content ?? string.Empty,
+                    State = MessageState.Completed,
+                    Timestamp = ts,
+                };
+                // Preserve reasoning if the server persisted it (matches the
+                // chat UX's existing reasoning plumbing — still hidden by
+                // default per the earlier UX decision but data is intact).
+                var reason = m.ReasoningContent ?? m.Reasoning;
+                if (!string.IsNullOrEmpty(reason))
+                {
+                    vm.ReasoningBuffer.Append(reason);
+                    vm.Reasoning = reason;
+                }
+                hydrated.Add(vm);
+            }
+        }
+
+        // 4. Atomic swap on the UI thread (we're already on it — public
+        //    method called from a UI handler).
+        Messages.Clear();
+        foreach (var vm in hydrated) Messages.Add(vm);
+        SessionId = sessionId;
+        SessionTitle = detail?.Session?.Title;
+
+        IsBusy = false;
         StatusText = "Ready";
     }
 

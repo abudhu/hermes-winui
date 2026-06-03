@@ -32,6 +32,22 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Switches the side nav to the "Chat" item. The NavView's
+    /// own <c>SelectionChanged</c> event then routes the user to ChatPage
+    /// through the same code path as a click. Used by SessionsPage's
+    /// "Resume conversation" handoff.</summary>
+    public void NavigateToChat()
+    {
+        foreach (var item in NavView.MenuItems)
+        {
+            if (item is NavigationViewItem nvi && (nvi.Tag as string) == "chat")
+            {
+                NavView.SelectedItem = nvi;
+                return;
+            }
+        }
+    }
+
     private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
         if (args.IsSettingsSelected)
@@ -72,3 +88,4 @@ public sealed partial class MainWindow : Window
         NavFrame.Navigate(pageType, null, transition);
     }
 }
+

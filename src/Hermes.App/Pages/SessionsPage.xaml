@@ -9,6 +9,17 @@
     xmlns:vm="using:Hermes.App.ViewModels"
     mc:Ignorable="d">
 
+    <Page.Resources>
+        <!-- Grouped sessions feed for the left ListView. IsSourceGrouped=True
+             + ItemsPath="Items" tells WinUI that the top-level collection is
+             groups, and that each group's child items live in a property
+             named "Items" (see SessionGroupVm). Source is set in code-behind
+             so we can ensure it's wired before the ListView binds. -->
+        <CollectionViewSource x:Name="GroupedSessionsSource"
+                              IsSourceGrouped="True"
+                              ItemsPath="Items" />
+    </Page.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -49,7 +60,7 @@
 
             <ListView x:Name="SessionList"
                       Grid.Column="0"
-                      ItemsSource="{x:Bind Sessions, Mode=OneWay}"
+                      ItemsSource="{x:Bind GroupedSessionsSource.View, Mode=OneWay}"
                       SelectionChanged="SessionList_SelectionChanged"
                       SelectionMode="Single"
                       IsItemClickEnabled="False"
@@ -60,6 +71,20 @@
                         <Setter Property="Padding" Value="12,10" />
                     </Style>
                 </ListView.ItemContainerStyle>
+                <ListView.GroupStyle>
+                    <GroupStyle HidesIfEmpty="True">
+                        <GroupStyle.HeaderTemplate>
+                            <DataTemplate x:DataType="vm:SessionGroupVm">
+                                <Border Padding="4,12,4,4">
+                                    <TextBlock Text="{x:Bind Header}"
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               FontWeight="SemiBold"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </Border>
+                            </DataTemplate>
+                        </GroupStyle.HeaderTemplate>
+                    </GroupStyle>
+                </ListView.GroupStyle>
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="vm:SessionRowVm">
                         <StackPanel Spacing="4">
@@ -135,17 +160,37 @@
                                Text="Select a session" />
                 </StackPanel>
 
-                <StackPanel Grid.Row="0" x:Name="DetailHeader" Spacing="10" Visibility="Collapsed">
-                    <TextBlock x:Name="DetailTitle"
-                               Style="{StaticResource TitleTextBlockStyle}" />
-                    <ItemsControl x:Name="DetailMetaItems">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <StackPanel Orientation="Horizontal" Spacing="14" />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                    </ItemsControl>
-                </StackPanel>
+                <Grid Grid.Row="0"
+                      x:Name="DetailHeader"
+                      Visibility="Collapsed"
+                      ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Spacing="10">
+                        <TextBlock x:Name="DetailTitle"
+                                   Style="{StaticResource TitleTextBlockStyle}" />
+                        <ItemsControl x:Name="DetailMetaItems">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="14" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </StackPanel>
+                    <Button x:Name="ResumeButton"
+                            Grid.Column="1"
+                            Style="{StaticResource AccentButtonStyle}"
+                            VerticalAlignment="Top"
+                            Click="ResumeButton_Click"
+                            ToolTipService.ToolTip="Continue this conversation in Chat">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE8BD;" FontSize="14" />
+                            <TextBlock Text="Resume conversation" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
 
                 <Border Grid.Row="1"
                         x:Name="DetailMetaBorder"
@@ -237,3 +282,4 @@
         </Grid>
     </Grid>
 </Page>
+

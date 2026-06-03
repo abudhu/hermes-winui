@@ -16,15 +16,27 @@ namespace Hermes.App.Pages;
 public sealed partial class SessionsPage : Page
 {
     private readonly HermesApiClient _api;
+    private readonly ChatViewModel _chat;
     private CancellationTokenSource? _detailCts;
+    private SessionRowVm? _selectedRow;
 
-    public ObservableCollection<SessionRowVm> Sessions { get; } = [];
+    /// <summary>Top-level groups for the left ListView. Each group's
+    /// <c>Items</c> holds the actual session rows. The <c>CollectionViewSource</c>
+    /// declared in XAML grafts these together with <c>IsSourceGrouped</c>.</summary>
+    public ObservableCollection<SessionGroupVm> Groups { get; } = [];
+
     public ObservableCollection<MessageRowVm> Messages { get; } = [];
 
     public SessionsPage()
     {
         _api = App.Services.GetRequiredService<HermesApiClient>();
+        _chat = App.Services.GetRequiredService<ChatViewModel>();
         InitializeComponent();
+
+        // Wire CollectionViewSource → grouped collection here (rather than
+        // in XAML via x:Bind) so the binding evaluates exactly once after
+        // the page is initialised, with the live ObservableCollection.
+        GroupedSessionsSource.Source = Groups;
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -41,15 +53,37 @@ public sealed partial class SessionsPage : Page
         try
         {
             var list = await _api.GetSessionsAsync(50, true, CancellationToken.None);
-            Sessions.Clear();
+            Groups.Clear();
             if (list?.Data is null) { Subtitle.Text = "No sessions"; return; }
 
-            foreach (var s in list.Data.OrderByDescending(s => s.LastActive ?? 0))
+            // Bucket each session by last-active date, then sort groups by
+            // SortKey descending so Today lands at the top. Within each group
+            // sessions are ordered most-recently-active first.
+            var bucketed = list.Data
+                .Select(s => (
+                    Summary: s,
+                    Bucket: DateGroupHelper.BucketForEpochSeconds(s.LastActive ?? s.StartedAt)))
+                .GroupBy(t => t.Bucket.SortKey, t => t)
+                .OrderByDescending(g => g.Key)
+                .ToList();
+
+            int total = 0;
+            int open = 0;
+            foreach (var group in bucketed)
             {
-                Sessions.Add(SessionRowVm.FromSummary(s));
+                var label = group.First().Bucket.Header;
+                var gvm = new SessionGroupVm(label, group.Key);
+                foreach (var t in group.OrderByDescending(t => t.Summary.LastActive ?? 0))
+                {
+                    var row = SessionRowVm.FromSummary(t.Summary);
+                    gvm.Items.Add(row);
+                    total++;
+                    if (row.IsOpen) open++;
+                }
+                Groups.Add(gvm);
             }
-            var openCount = Sessions.Count(s => s.IsOpen);
-            Subtitle.Text = $"{Sessions.Count} session{(Sessions.Count == 1 ? "" : "s")} · {openCount} open";
+
+            Subtitle.Text = $"{total} session{(total == 1 ? "" : "s")} · {open} open";
         }
         catch (Exception ex)
         {
@@ -59,7 +93,12 @@ public sealed partial class SessionsPage : Page
 
     private async void SessionList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (SessionList.SelectedItem is not SessionRowVm row) return;
+        if (SessionList.SelectedItem is not SessionRowVm row)
+        {
+            _selectedRow = null;
+            return;
+        }
+        _selectedRow = row;
 
         _detailCts?.Cancel();
         _detailCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -69,6 +108,7 @@ public sealed partial class SessionsPage : Page
         DetailHeader.Visibility = Visibility.Visible;
         DetailMetaBorder.Visibility = Visibility.Visible;
         MessagesScroll.Visibility = Visibility.Visible;
+        ResumeButton.IsEnabled = true;
 
         DetailTitle.Text = row.Title;
         DetailModel.Text = row.Model ?? "—";
@@ -102,4 +142,30 @@ public sealed partial class SessionsPage : Page
             Messages.Add(new MessageRowVm("system", $"Could not load: {ex.Message}", DateTimeOffset.Now));
         }
     }
+
+    /// <summary>Hands the selected session over to ChatViewModel and switches
+    /// the nav to the Chat tab. The await guarantees ChatPage is presented
+    /// already-hydrated (no flicker between empty transcript and history).</summary>
+    private async void ResumeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedRow is not { } row) return;
+
+        ResumeButton.IsEnabled = false;
+        try
+        {
+            await _chat.ResumeSessionAsync(row.Id);
+            App.MainWindow?.NavigateToChat();
+        }
+        catch (Exception ex)
+        {
+            // ResumeSessionAsync handles its own errors via StatusText, but
+            // a thrown exception here means something pre-fetch went wrong.
+            Messages.Add(new MessageRowVm("system", $"Could not resume: {ex.Message}", DateTimeOffset.Now));
+        }
+        finally
+        {
+            ResumeButton.IsEnabled = true;
+        }
+    }
 }
+
