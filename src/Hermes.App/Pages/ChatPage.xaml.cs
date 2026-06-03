@@ -14,20 +14,27 @@ namespace Hermes.App.Pages;
 
 public sealed partial class ChatPage : Page
 {
-    /// <summary>Pixel slack for "is the user near the bottom?". Generous so a slight scroll-back doesn't break auto-follow.</summary>
-    private const double StickyBottomSlackPx = 48;
+    /// <summary>How close to the very bottom (in px) the user has to be for
+    /// us to re-engage auto-follow. Deliberately tiny — any deliberate scroll
+    /// up by even a single wheel notch should break the follow.</summary>
+    private const double ReStickSlackPx = 4;
 
-    /// <summary>How recently the user must have interacted (wheel, key, pointer)
-    /// for a ViewChanged event to be treated as authoritative. ViewChanged also
-    /// fires when content-layout changes clamp the scroll offset under us (e.g.
-    /// MarkdownPresenter rebuilding during streaming) — without this gate, those
-    /// layout-driven events would falsely re-stick the user to the bottom on
-    /// every render tick.</summary>
-    private const int UserInteractionGracePeriodMs = 1000;
+    /// <summary>Tolerance for "did the offset actually change?" — filters out
+    /// sub-pixel ViewChanged events that don't represent real user motion.</summary>
+    private const double OffsetEpsilonPx = 1;
+
+    /// <summary>Debounce window for size-driven snap-to-bottom. If the user
+    /// initiates a scroll within this window, the snap is cancelled and they
+    /// keep their position. Long enough to catch a wheel scroll that's
+    /// already in flight when content growth fires SizeChanged.</summary>
+    private const int SnapDebounceMs = 60;
 
     private bool _stickToBottom = true;
     private bool _suppressViewChanged;
-    private DateTimeOffset _lastUserInteractionAt = DateTimeOffset.MinValue;
+    private bool _viewTrackingInitialized;
+    private double _lastViewedOffset;
+    private double _lastViewedScrollable;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _snapTimer;
 
     /// <summary>True while we're subscribed to ViewModel events. Tracks
     /// attach/detach across OnNavigatedTo / OnNavigatedFrom so we don't
@@ -46,24 +53,6 @@ public sealed partial class ChatPage : Page
         ViewModel = App.Services.GetRequiredService<ChatViewModel>();
 
         InitializeComponent();
-
-        // handledEventsToo: true is required because the message bubbles
-        // contain RichTextBlocks (and previously CodeBlockControl had a
-        // nested horizontal ScrollViewer) that mark wheel events as handled
-        // before they reach the outer transcript ScrollViewer. We still
-        // want to know the user wheeled so we can correctly unstick.
-        TranscriptScroll.AddHandler(
-            UIElement.PointerWheelChangedEvent,
-            new PointerEventHandler(OnTranscriptPointerWheel),
-            handledEventsToo: true);
-        TranscriptScroll.AddHandler(
-            UIElement.PointerPressedEvent,
-            new PointerEventHandler(OnTranscriptPointerPressed),
-            handledEventsToo: true);
-        TranscriptScroll.AddHandler(
-            UIElement.KeyDownEvent,
-            new KeyEventHandler(OnTranscriptKeyDown),
-            handledEventsToo: true);
 
         // First-render hookup. We also attach on OnNavigatedTo, but on the
         // very first construction OnNavigatedTo and the ctor both fire — the
@@ -171,90 +160,100 @@ public sealed partial class ChatPage : Page
     }
 
     /// <summary>
-    /// Tracks whether the user is "near the bottom" so we can keep auto-scrolling
-    /// when assistant tokens stream in, but stop fighting them if they scrolled up
-    /// to read history.
+    /// Updates <see cref="_stickToBottom"/> based on the *delta* between the
+    /// previous and current scroll position. This is the only place we look
+    /// at scroll position to decide stickiness.
     ///
-    /// <para>Important: this handler only updates <see cref="_stickToBottom"/>
-    /// when a real user interaction (wheel, key, pointer) happened recently.
-    /// Otherwise this fires from content-layout changes (e.g.
-    /// <see cref="Controls.MarkdownPresenter"/> rebuilding its children on
-    /// every streaming tick) which clamp the scroll offset and would
-    /// otherwise be misread as "user is at the bottom".</para>
+    /// <para>Why deltas, not absolute position: when MarkdownPresenter
+    /// rebuilds its visual tree mid-stream, the ScrollViewer's ScrollableHeight
+    /// briefly shrinks and the VerticalOffset gets clamped under us. Old code
+    /// checked "is the clamped offset near the bottom?" and would falsely
+    /// re-stick on every render tick. The delta approach can distinguish
+    /// user-initiated scroll (offset changes, scrollable doesn't) from
+    /// layout-driven clamping (both change).</para>
     /// </summary>
     private void TranscriptScroll_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
         if (_suppressViewChanged) return;
-        var sinceInteractionMs = (DateTimeOffset.UtcNow - _lastUserInteractionAt).TotalMilliseconds;
-        if (sinceInteractionMs > UserInteractionGracePeriodMs) return;
-
         var sv = TranscriptScroll;
-        var nearBottom = sv.VerticalOffset + sv.ViewportHeight >= sv.ScrollableHeight - StickyBottomSlackPx;
-        _stickToBottom = nearBottom;
-    }
+        var newOffset = sv.VerticalOffset;
+        var newScrollable = sv.ScrollableHeight;
 
-    /// <summary>
-    /// Mouse wheel on the transcript. <see cref="UIElement.AddHandler"/> with
-    /// <c>handledEventsToo: true</c> is required so we still see the event
-    /// when a child (RichTextBlock, etc.) marked it handled.
-    /// </summary>
-    private void OnTranscriptPointerWheel(object sender, PointerRoutedEventArgs e)
-    {
-        _lastUserInteractionAt = DateTimeOffset.UtcNow;
-        var delta = e.GetCurrentPoint(TranscriptScroll).Properties.MouseWheelDelta;
-        if (delta > 0)
+        if (!_viewTrackingInitialized)
         {
-            // User wheeled up — stop chasing the bottom.
+            _viewTrackingInitialized = true;
+            _lastViewedOffset = newOffset;
+            _lastViewedScrollable = newScrollable;
+            return;
+        }
+
+        var offsetDelta = newOffset - _lastViewedOffset;
+        var scrollableDelta = newScrollable - _lastViewedScrollable;
+        _lastViewedOffset = newOffset;
+        _lastViewedScrollable = newScrollable;
+
+        // Scrollable extent shrank → offset may have been clamped by the
+        // layout system, not the user. Skip the stickiness update; the next
+        // size-change snap will keep us in the right place.
+        if (scrollableDelta < -OffsetEpsilonPx) return;
+
+        if (offsetDelta < -OffsetEpsilonPx)
+        {
+            // Offset went UP while scrollable didn't shrink → user scrolled up
+            // (wheel, keyboard, scrollbar drag, touch pan). Stop chasing the
+            // bottom and cancel any in-flight snap.
             _stickToBottom = false;
+            _snapTimer?.Stop();
         }
-        // Wheel down is handled implicitly: the subsequent ViewChanged with
-        // our grace-period gate will re-stick when the user reaches the
-        // bottom slack.
-    }
-
-    /// <summary>Pointer pressed inside the transcript (scrollbar thumb drag,
-    /// touch pan start, mouse click). Counts as a user interaction so the
-    /// ViewChanged handler is allowed to update stickiness.</summary>
-    private void OnTranscriptPointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        _lastUserInteractionAt = DateTimeOffset.UtcNow;
-    }
-
-    /// <summary>Keyboard nav inside the transcript (Page Up/Down, arrows, Home/End).
-    /// Up-direction keys unstick immediately; Down keys defer to ViewChanged.</summary>
-    private void OnTranscriptKeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        switch (e.Key)
+        else if (offsetDelta > OffsetEpsilonPx)
         {
-            case VirtualKey.PageUp:
-            case VirtualKey.Up:
-            case VirtualKey.Home:
-                _lastUserInteractionAt = DateTimeOffset.UtcNow;
-                _stickToBottom = false;
-                break;
-            case VirtualKey.PageDown:
-            case VirtualKey.Down:
-            case VirtualKey.End:
-                _lastUserInteractionAt = DateTimeOffset.UtcNow;
-                break;
+            // Offset went DOWN → user scrolled down (or our own programmatic
+            // snap, but those are suppressed via _suppressViewChanged). Only
+            // re-engage auto-follow when they're at the very bottom.
+            if (newOffset >= newScrollable - ReStickSlackPx)
+            {
+                _stickToBottom = true;
+            }
         }
     }
 
     /// <summary>
-    /// Content size grew (new message, more tokens, expander toggled). If the
-    /// user was already near the bottom, snap back to it.
+    /// Content size grew (new message, more tokens, expander toggled). Schedule
+    /// a debounced snap-to-bottom — the delay gives an in-flight wheel scroll
+    /// a chance to fire its <see cref="TranscriptScroll_ViewChanged"/> first
+    /// and cancel the snap, so the user doesn't fight us when they wheel up
+    /// while a token is streaming in.
     /// </summary>
     private void TranscriptContent_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (!_stickToBottom) return;
-        var sv = TranscriptScroll;
-        // Defer one tick so layout pass settles before we measure ScrollableHeight.
-        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().TryEnqueue(() =>
+
+        if (_snapTimer is null)
         {
-            _suppressViewChanged = true;
-            sv.ChangeView(null, sv.ScrollableHeight, null, disableAnimation: true);
-            _suppressViewChanged = false;
-        });
+            _snapTimer = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+            _snapTimer.IsRepeating = false;
+            _snapTimer.Interval = TimeSpan.FromMilliseconds(SnapDebounceMs);
+            _snapTimer.Tick += SnapTimer_Tick;
+        }
+        _snapTimer.Stop();
+        _snapTimer.Start();
+    }
+
+    private void SnapTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        // Re-check stickiness — the user may have wheeled up between
+        // SizeChanged and now, in which case ViewChanged set _stickToBottom
+        // to false. We also cancel the timer there, but be defensive.
+        if (!_stickToBottom) return;
+
+        var sv = TranscriptScroll;
+        _suppressViewChanged = true;
+        sv.ChangeView(null, sv.ScrollableHeight, null, disableAnimation: true);
+        _suppressViewChanged = false;
+        // Resync the trackers so the next user-initiated ViewChanged computes
+        // its delta from the post-snap position, not the pre-snap one.
+        _lastViewedOffset = sv.VerticalOffset;
+        _lastViewedScrollable = sv.ScrollableHeight;
     }
 }
 
