@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Hermes.ApiClient.Models;
 
 namespace Hermes.App.ViewModels;
 
@@ -51,6 +52,15 @@ public sealed partial class MessageVm : ObservableObject
     [ObservableProperty]
     public partial MessageState State { get; set; } = MessageState.Authored;
 
+    /// <summary>
+    /// Per-turn token accounting once <c>run.completed</c> arrives, or a
+    /// best-effort approximation built from <c>SessionMessage.TokenCount</c>
+    /// for messages hydrated from server history. <see langword="null"/>
+    /// while streaming and for hydrated messages with no recorded count.
+    /// </summary>
+    [ObservableProperty]
+    public partial UsageStats? Usage { get; set; }
+
     /// <summary>Inline tool calls that occurred during this assistant turn.</summary>
     public ObservableCollection<ToolCallVm> ToolCalls { get; } = [];
 
@@ -66,6 +76,16 @@ public sealed partial class MessageVm : ObservableObject
     /// contents off-center.</summary>
     public bool HasToolCalls => ToolCalls.Count > 0;
 
+    /// <summary>True when <see cref="Usage"/> has any tokens worth showing.
+    /// Drives the per-message usage footer's Visibility so the row doesn't
+    /// reserve dead space on bubbles without usage data (e.g. user turns).</summary>
+    public bool HasUsage => Usage is { HasAny: true };
+
+    /// <summary>Formatted one-liner for the per-message usage footer.
+    /// Empty string when there's nothing to show — bindings should also
+    /// gate on <see cref="HasUsage"/> for Visibility.</summary>
+    public string UsageLine => FormatUsage(Usage, compact: false);
+
     /// <summary>Display name for the message header ("You" or "Hermes").
     /// Computed from <see cref="Role"/> which is init-only, so this is
     /// effectively a constant for the lifetime of the VM.</summary>
@@ -77,11 +97,54 @@ public sealed partial class MessageVm : ObservableObject
 
     partial void OnStateChanged(MessageState value) => OnPropertyChanged(nameof(IsStreaming));
     partial void OnReasoningChanged(string value) => OnPropertyChanged(nameof(HasReasoning));
+    partial void OnUsageChanged(UsageStats? value)
+    {
+        OnPropertyChanged(nameof(HasUsage));
+        OnPropertyChanged(nameof(UsageLine));
+    }
 
     public MessageVm()
     {
         // ObservableCollection raises CollectionChanged whenever items are
         // added/removed; we use that to re-raise HasToolCalls for the binding.
         ToolCalls.CollectionChanged += (_, __) => OnPropertyChanged(nameof(HasToolCalls));
+    }
+
+    /// <summary>Formats a usage snapshot for display. Returns an empty
+    /// string when nothing useful would render. <paramref name="compact"/>
+    /// shortens with K/M suffixes (for the session-total chip in the
+    /// header where horizontal space is tight).</summary>
+    public static string FormatUsage(UsageStats? u, bool compact)
+    {
+        if (u is null || !u.HasAny) return string.Empty;
+        var sb = new StringBuilder();
+        if (u.InputTokens is long inT)
+        {
+            sb.Append('\u2193').Append(' ').Append(FormatCount(inT, compact)).Append(" in");
+        }
+        if (u.OutputTokens is long outT)
+        {
+            if (sb.Length > 0) sb.Append(" \u00b7 ");
+            sb.Append('\u2191').Append(' ').Append(FormatCount(outT, compact)).Append(" out");
+        }
+        if (u.CachedReadTokens is long cr && cr > 0)
+        {
+            if (sb.Length > 0) sb.Append(" \u00b7 ");
+            sb.Append(FormatCount(cr, compact)).Append(" cached");
+        }
+        if (u.ReasoningTokens is long rt && rt > 0)
+        {
+            if (sb.Length > 0) sb.Append(" \u00b7 ");
+            sb.Append(FormatCount(rt, compact)).Append(" reasoning");
+        }
+        return sb.ToString();
+    }
+
+    private static string FormatCount(long n, bool compact)
+    {
+        if (!compact) return n.ToString("N0", CultureInfo.CurrentCulture);
+        if (n >= 1_000_000) return (n / 1_000_000.0).ToString("0.#", CultureInfo.CurrentCulture) + "M";
+        if (n >= 1_000) return (n / 1_000.0).ToString("0.#", CultureInfo.CurrentCulture) + "K";
+        return n.ToString("N0", CultureInfo.CurrentCulture);
     }
 }

@@ -71,6 +71,53 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial string? SessionTitle { get; set; }
 
+    /// <summary>
+    /// Running total of token usage for the active session. Updated when
+    /// each <c>run.completed</c> arrives (adding to whatever <see cref="ResumeSessionAsync"/>
+    /// seeded from the persistent session detail). <see langword="null"/>
+    /// for fresh chats that haven't completed a turn yet.
+    /// </summary>
+    [ObservableProperty]
+    public partial UsageStats? SessionUsage { get; set; }
+
+    /// <summary>Optional dollar-cost estimate for the session, surfaced
+    /// from <see cref="SessionDetail.EstimatedCostUsd"/> on Resume. Updated
+    /// only when the gateway provides it.</summary>
+    [ObservableProperty]
+    public partial double? SessionCostUsd { get; set; }
+
+    /// <summary>Formatted one-liner shown in the chat header strip.
+    /// Empty when there's no usage to display.</summary>
+    public string SessionUsageLine
+    {
+        get
+        {
+            var line = MessageVm.FormatUsage(SessionUsage, compact: true);
+            if (SessionCostUsd is double c && c > 0)
+            {
+                var cost = c < 0.01
+                    ? $"${c:F4}"
+                    : $"${c:F2}";
+                line = line.Length > 0 ? $"{line} \u00b7 {cost}" : cost;
+            }
+            return line;
+        }
+    }
+
+    public bool HasSessionUsage => SessionUsage is { HasAny: true } || SessionCostUsd is > 0;
+
+    partial void OnSessionUsageChanged(UsageStats? value)
+    {
+        OnPropertyChanged(nameof(SessionUsageLine));
+        OnPropertyChanged(nameof(HasSessionUsage));
+    }
+
+    partial void OnSessionCostUsdChanged(double? value)
+    {
+        OnPropertyChanged(nameof(SessionUsageLine));
+        OnPropertyChanged(nameof(HasSessionUsage));
+    }
+
     public ChatViewModel(HermesApiClient api, HermesStreamingClient stream, DispatcherQueue dispatcher)
     {
         _api = api;
@@ -220,6 +267,8 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         Messages.Clear();
         SessionId = null;
         SessionTitle = null;
+        SessionUsage = null;
+        SessionCostUsd = null;
         StatusText = "Ready";
     }
 
@@ -307,6 +356,17 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
                     vm.ReasoningBuffer.Append(reason);
                     vm.Reasoning = reason;
                 }
+                // Hydrate a best-effort per-turn Usage from the persisted
+                // token_count. The server stores a single total per message
+                // (no in/out split for individual turns), so we put user
+                // counts on the input side and assistant counts on the
+                // output side — close enough to make the footer informative.
+                if (m.TokenCount is int tc && tc > 0)
+                {
+                    vm.Usage = role == MessageRole.User
+                        ? new UsageStats(InputTokens: tc)
+                        : new UsageStats(OutputTokens: tc);
+                }
                 hydrated.Add(vm);
             }
         }
@@ -317,6 +377,26 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         foreach (var vm in hydrated) Messages.Add(vm);
         SessionId = sessionId;
         SessionTitle = detail?.Session?.Title;
+
+        // 5. Seed session totals from the persistent detail so the header
+        //    chip reflects accumulated cost the moment Resume completes,
+        //    not just whatever future runs add.
+        if (detail?.Session is { } d)
+        {
+            var seeded = new UsageStats(
+                InputTokens: d.InputTokens,
+                OutputTokens: d.OutputTokens,
+                CachedReadTokens: d.CacheReadTokens,
+                CachedWriteTokens: d.CacheWriteTokens,
+                ReasoningTokens: d.ReasoningTokens);
+            SessionUsage = seeded.HasAny ? seeded : null;
+            SessionCostUsd = d.EstimatedCostUsd;
+        }
+        else
+        {
+            SessionUsage = null;
+            SessionCostUsd = null;
+        }
 
         IsBusy = false;
         StatusText = "Ready";
@@ -410,6 +490,15 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
                     {
                         msg.Buffer.Append(rc.Output);
                         msg.Content = rc.Output!;
+                    }
+
+                    // Token accounting. Per-turn lands on the bubble; the
+                    // session total in the header rolls in whatever new
+                    // numbers arrived (preserving anything Resume seeded).
+                    if (rc.Usage is { HasAny: true } u)
+                    {
+                        msg.Usage = u;
+                        SessionUsage = SessionUsage is null ? u : SessionUsage.Add(u);
                     }
                     break;
 

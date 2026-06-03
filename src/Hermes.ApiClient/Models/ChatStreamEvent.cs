@@ -68,6 +68,10 @@ public sealed record RunCompletedEvent : ChatStreamEvent
     public string? RunId { get; init; }
     /// <summary>Final messages array from run.completed (assistant content is here).</summary>
     public string? FinalAssistantContent { get; init; }
+    /// <summary>Per-run token accounting parsed out of <see cref="UsageJson"/>;
+    /// <see langword="null"/> when the gateway didn't ship a usage object or
+    /// its shape was unrecognized.</summary>
+    public UsageStats? Usage { get; init; }
 }
 
 /// <summary>Terminal: the run errored.</summary>

@@ -52,10 +52,12 @@
         </DataTemplate>
 
         <!-- Assistant bubble: left-aligned card with tool-call expanders.
-             Outer Grid has two Auto rows: header (role + timestamp), then bubble. -->
+             Outer Grid has three Auto rows: header (role + timestamp), bubble,
+             then per-turn usage footer. -->
         <DataTemplate x:Key="AssistantTemplate" x:DataType="vm:MessageVm">
             <Grid Padding="0,6,0,6" HorizontalAlignment="Stretch">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
@@ -212,6 +214,16 @@
                         </StackPanel>
                     </StackPanel>
                 </Border>
+
+                <!-- Per-turn token footer. Hidden until run.completed lands
+                     a Usage object on the VM; for hydrated history turns
+                     this shows a best-effort breakdown from token_count. -->
+                <TextBlock Grid.Row="2"
+                           Margin="6,4,4,0"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                           Text="{x:Bind UsageLine, Mode=OneWay}"
+                           Visibility="{x:Bind app:Converters.BoolToVisible(HasUsage), Mode=OneWay}" />
             </Grid>
         </DataTemplate>
 
@@ -238,6 +250,7 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                     <TextBlock Style="{StaticResource SubtitleTextBlockStyle}"
@@ -247,13 +260,26 @@
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                Text="No session yet" />
                 </StackPanel>
+                <!-- Running session totals: hidden until the first run completes
+                     (or until ResumeSessionAsync seeds from SessionDetail). -->
+                <Border Grid.Column="1"
+                        VerticalAlignment="Center"
+                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                        CornerRadius="6"
+                        Padding="8,3"
+                        Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.HasSessionUsage), Mode=OneWay}"
+                        ToolTipService.ToolTip="Total tokens used in this session">
+                    <TextBlock Text="{x:Bind ViewModel.SessionUsageLine, Mode=OneWay}"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Border>
                 <TextBlock x:Name="StatusLabel"
-                           Grid.Column="1"
+                           Grid.Column="2"
                            Style="{StaticResource CaptionTextBlockStyle}"
                            VerticalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                            Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
-                <Button Grid.Column="2"
+                <Button Grid.Column="3"
                         Command="{x:Bind ViewModel.NewChatCommand}"
                         ToolTipService.ToolTip="Start a new chat">
                     <StackPanel Orientation="Horizontal" Spacing="6">

@@ -249,6 +249,9 @@ public sealed class HermesStreamingClient : IDisposable
             RawData = data,
             Output = TryGetString(root, "output"),
             UsageJson = TryGetJson(root, "usage"),
+            Usage = root.TryGetProperty("usage", out var usageEl)
+                ? UsageStats.FromElement(usageEl)
+                : null,
             RunId = TryGetString(root, "run_id"),
             FinalAssistantContent = finalContent,
         };
