@@ -7,16 +7,25 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:app="using:Hermes.App"
     xmlns:vm="using:Hermes.App.ViewModels"
+    xmlns:settings="using:Hermes.App.Pages.Settings"
     mc:Ignorable="d">
 
     <ScrollViewer Padding="32,24,32,32" VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="880" Spacing="24" HorizontalAlignment="Stretch">
+        <StackPanel MaxWidth="980" Spacing="20" HorizontalAlignment="Stretch">
 
             <TextBlock Style="{StaticResource TitleLargeTextBlockStyle}" Text="Settings" />
 
-            <!-- Gateway -->
-            <StackPanel Spacing="10">
-                <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="Gateway" />
+            <!-- Section selector -->
+            <SelectorBar x:Name="SectionSelector"
+                         SelectionChanged="SectionSelector_SelectionChanged">
+                <SelectorBarItem x:Name="GatewayTab" Text="Gateway" IsSelected="True" />
+                <SelectorBarItem x:Name="McpTab" Text="MCP servers" />
+            </SelectorBar>
+
+            <!-- Gateway pane -->
+            <StackPanel x:Name="GatewayPane" Spacing="20">
+
+                <!-- Gateway -->
                 <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                         BorderThickness="1"
@@ -175,52 +184,55 @@
                         </Grid>
                     </StackPanel>
                 </Border>
+
+                <!-- Capabilities feature matrix -->
+                <StackPanel Spacing="10">
+                    <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="Capabilities" />
+                    <TextBlock x:Name="CapsStatus"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Text="Loading…" />
+                    <ItemsRepeater ItemsSource="{x:Bind Features, Mode=OneWay}">
+                        <ItemsRepeater.Layout>
+                            <UniformGridLayout MinColumnSpacing="8"
+                                               MinRowSpacing="8"
+                                               MinItemWidth="260"
+                                               MinItemHeight="44" />
+                        </ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate x:DataType="vm:FeatureFlagVm">
+                                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        Padding="12,8">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Grid.Column="0"
+                                                  Glyph="{x:Bind Glyph}"
+                                                  FontSize="14"
+                                                  Foreground="{x:Bind Foreground}"
+                                                  VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{x:Bind Name}"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                </StackPanel>
             </StackPanel>
 
-            <!-- Capabilities feature matrix -->
-            <StackPanel Spacing="10">
-                <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="Capabilities" />
-                <TextBlock x:Name="CapsStatus"
-                           Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           Text="Loading…" />
-                <ItemsRepeater ItemsSource="{x:Bind Features, Mode=OneWay}">
-                    <ItemsRepeater.Layout>
-                        <UniformGridLayout MinColumnSpacing="8"
-                                           MinRowSpacing="8"
-                                           MinItemWidth="260"
-                                           MinItemHeight="44" />
-                    </ItemsRepeater.Layout>
-                    <ItemsRepeater.ItemTemplate>
-                        <DataTemplate x:DataType="vm:FeatureFlagVm">
-                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="6"
-                                    Padding="12,8">
-                                <Grid ColumnSpacing="10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <FontIcon Grid.Column="0"
-                                              Glyph="{x:Bind Glyph}"
-                                              FontSize="14"
-                                              Foreground="{x:Bind Foreground}"
-                                              VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="1"
-                                               Text="{x:Bind Name}"
-                                               Style="{StaticResource CaptionTextBlockStyle}"
-                                               TextTrimming="CharacterEllipsis"
-                                               VerticalAlignment="Center" />
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsRepeater.ItemTemplate>
-                </ItemsRepeater>
-            </StackPanel>
+            <!-- MCP pane -->
+            <settings:McpServersView x:Name="McpPane" Visibility="Collapsed" />
 
-            <!-- About -->
+            <!-- About (always visible, below the selector) -->
             <StackPanel Spacing="10">
                 <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="About" />
                 <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"

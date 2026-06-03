@@ -98,6 +98,24 @@ public sealed partial class SettingsPage : Page
         }
     }
 
+    // ---- section selector ---------------------------------------------------
+
+    private void SectionSelector_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        // SelectorBar fires this before XAML init has wired the panes the
+        // very first time (when IsSelected="True" on the default item),
+        // so guard against null.
+        if (GatewayPane is null || McpPane is null) return;
+
+        var showMcp = ReferenceEquals(sender.SelectedItem, McpTab);
+        GatewayPane.Visibility = showMcp ? Visibility.Collapsed : Visibility.Visible;
+        McpPane.Visibility = showMcp ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>True if EITHER the gateway form OR the MCP editor has
+    /// unsaved changes. Exposed for the top-level navigation guard.</summary>
+    public bool HasUnsavedChanges => IsDirty() || McpPane.IsEditorDirty;
+
     private void OpenConfig_Click(object sender, RoutedEventArgs e)
     {
         var dir = _api.Config.ConfigDirectory;
