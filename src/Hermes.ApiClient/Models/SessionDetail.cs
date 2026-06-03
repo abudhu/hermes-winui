@@ -57,7 +57,8 @@ public sealed record SessionMessage(
 
 public sealed record CreateSessionRequest(
     [property: JsonPropertyName("title")] string? Title = null,
-    [property: JsonPropertyName("source")] string? Source = "api"
+    [property: JsonPropertyName("source")] string? Source = "api",
+    [property: JsonPropertyName("model")] string? Model = null
 );
 
 public sealed record CreateSessionResponse(

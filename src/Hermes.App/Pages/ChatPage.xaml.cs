@@ -104,6 +104,12 @@ public sealed partial class ChatPage : Page
         // Reflect any state changes that landed while the page was unloaded
         // (e.g. SessionsPage just called ResumeSessionAsync on the VM).
         UpdateSessionLine();
+
+        // Kick off the model-list fetch the first time the chat page lands.
+        // Coalesces internally — subsequent navigations don't re-fetch unless
+        // the prior load failed. Discard the task; LoadModelsAsync catches
+        // exceptions so this can't surface as an unobserved-task crash.
+        _ = ViewModel.EnsureModelsLoadedAsync();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)

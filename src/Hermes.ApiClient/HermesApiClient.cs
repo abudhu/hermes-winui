@@ -72,17 +72,24 @@ public sealed class HermesApiClient : IDisposable
 
     /// <summary>
     /// Creates a fresh session that chat turns can be attached to. Hermes
-    /// auto-fills source / model from server config when omitted, and the
-    /// gateway will auto-generate a title from the first message so we don't
-    /// need to invent one (which used to collide — titles are unique).
+    /// auto-fills source / model from server config when both are omitted;
+    /// pass <paramref name="model"/> to override the global default for
+    /// this one session. The gateway will auto-generate a title from the
+    /// first message so we don't need to invent one (which used to collide —
+    /// titles are unique).
     /// </summary>
-    public async Task<SessionDetail?> CreateSessionAsync(string? title, CancellationToken ct = default)
+    public async Task<SessionDetail?> CreateSessionAsync(string? title, string? model, CancellationToken ct = default)
     {
         // Drop a hard-coded title — duplicate titles return 400 invalid_title,
         // and the server will name the session itself based on the first message.
-        var req = string.IsNullOrWhiteSpace(title)
-            ? new CreateSessionRequest(null, null)
-            : new CreateSessionRequest(title, null);
+        // Model is opt-in: null means "let the server pick its current default",
+        // which preserves server-side default behavior if the gateway config
+        // changes between when we read it at app start and when we actually
+        // create a session.
+        var req = new CreateSessionRequest(
+            Title: string.IsNullOrWhiteSpace(title) ? null : title,
+            Source: null,
+            Model: string.IsNullOrWhiteSpace(model) ? null : model);
 
         using var msg = new HttpRequestMessage(HttpMethod.Post, "/api/sessions")
         {

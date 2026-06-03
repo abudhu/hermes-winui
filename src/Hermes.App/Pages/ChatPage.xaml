@@ -296,6 +296,7 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                     <TextBlock Style="{StaticResource SubtitleTextBlockStyle}"
@@ -303,13 +304,80 @@
                     <TextBlock x:Name="SessionLine"
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextTrimming="CharacterEllipsis"
                                Text="No session yet" />
                 </StackPanel>
+
+                <!-- Model picker. Two mutually-exclusive elements share the
+                     same column: editable ComboBox while the chat is fresh
+                     (no session yet, not busy, models loaded), and a
+                     read-only chip otherwise. A disabled ComboBox would be
+                     simpler but WinUI 3's tooltips on disabled controls are
+                     unreliable, and the chip communicates state more
+                     clearly than affordance. -->
+                <Grid Grid.Column="1" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <ComboBox Grid.Column="0"
+                              x:Name="ModelPicker"
+                              ItemsSource="{x:Bind ViewModel.AvailableModels, Mode=OneWay}"
+                              SelectedValuePath="Id"
+                              SelectedValue="{x:Bind ViewModel.SelectedModelId, Mode=TwoWay}"
+                              MinWidth="140"
+                              MaxWidth="220"
+                              ToolTipService.ToolTip="Model for this chat (locks after first send)"
+                              Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.CanPickModel), Mode=OneWay}">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ModelOptionVm">
+                                <TextBlock Text="{x:Bind DisplayName}"
+                                           TextTrimming="CharacterEllipsis" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+
+                    <Border Grid.Column="0"
+                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                            CornerRadius="6"
+                            Padding="8,3"
+                            VerticalAlignment="Center"
+                            MaxWidth="220"
+                            ToolTipService.ToolTip="Start a new chat to switch models"
+                            Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.IsModelLocked), Mode=OneWay}">
+                        <TextBlock Text="{x:Bind ViewModel.SelectedModelDisplay, Mode=OneWay}"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </Border>
+
+                    <!-- Tiny inline spinner while /v1/models is in flight. -->
+                    <ProgressRing Grid.Column="1"
+                                  Width="14" Height="14"
+                                  IsActive="True"
+                                  Margin="6,0,0,0"
+                                  Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.ModelsAreLoading), Mode=OneWay}" />
+
+                    <!-- Retry button when the load failed. Hidden otherwise. -->
+                    <Button Grid.Column="1"
+                            Margin="6,0,0,0"
+                            Padding="4"
+                            MinWidth="0" MinHeight="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ToolTipService.ToolTip="Models failed to load — retry"
+                            Command="{x:Bind ViewModel.ReloadModelsCommand}"
+                            Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.ModelsFailed), Mode=OneWay}">
+                        <FontIcon Glyph="&#xE72C;" FontSize="12" />
+                    </Button>
+                </Grid>
+
                 <!-- Running session totals: hidden until the first run completes
                      (or until ResumeSessionAsync seeds from SessionDetail).
                      Tooltip text is conditional on whether SessionCostUsd
                      is actually rendered (driven by SessionUsageTooltip). -->
-                <Border Grid.Column="1"
+                <Border Grid.Column="2"
                         VerticalAlignment="Center"
                         Background="{ThemeResource SubtleFillColorSecondaryBrush}"
                         CornerRadius="6"
@@ -320,7 +388,7 @@
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </Border>
-                <Button Grid.Column="2"
+                <Button Grid.Column="3"
                         Command="{x:Bind ViewModel.NewChatCommand}"
                         ToolTipService.ToolTip="Start a new chat">
                     <StackPanel Orientation="Horizontal" Spacing="6">

@@ -27,6 +27,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
 {
     private readonly HermesApiClient _api;
     private readonly HermesStreamingClient _stream;
+    private readonly HermesConfig _config;
     private readonly DispatcherQueue _dispatcher;
 
     /// <summary>Independent CTS for the active stream — cancelled by Stop or NewChat.</summary>
@@ -61,6 +62,30 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     /// session context.
     /// </summary>
     private readonly HashSet<string> _seenRunIds = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// True only when the user actually changed the ComboBox selection.
+    /// Programmatic seeding (constructor default, post-resume, post-create
+    /// echo from the server) leaves this <see langword="false"/> so we
+    /// don't accidentally start passing <c>model</c> in the create-session
+    /// request just because we read the config default.
+    /// </summary>
+    private bool _userExplicitlyPicked;
+
+    /// <summary>
+    /// Wraps assignments to <see cref="SelectedModelId"/> that come from
+    /// our own code (ctor seed, post-resume seed, post-create echo) so the
+    /// <c>OnSelectedModelIdChanged</c> partial doesn't flip
+    /// <see cref="_userExplicitlyPicked"/> to true. Set/cleared inside the
+    /// same UI-thread call so we don't need a lock.
+    /// </summary>
+    private bool _suppressModelPickFlag;
+
+    /// <summary>The in-flight model-list load, kept so concurrent
+    /// <see cref="EnsureModelsLoadedAsync"/> callers coalesce onto one
+    /// network request. Replaced (not awaited) by
+    /// <see cref="ReloadModelsAsync"/> so the user can force a retry.</summary>
+    private Task? _modelsLoadTask;
 
     public ObservableCollection<MessageVm> Messages { get; } = [];
 
@@ -125,6 +150,68 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         ? "Total tokens and estimated cost for this session"
         : "Total tokens used in this session";
 
+    // -------------------------------------------------------------------
+    // Model picker
+    // -------------------------------------------------------------------
+
+    /// <summary>Lifecycle state of the <c>/v1/models</c> fetch. Drives
+    /// the picker's visual mode (loading spinner, editable, or
+    /// fallback chip).</summary>
+    public enum ModelLoadState
+    {
+        NotLoaded,
+        Loading,
+        Loaded,
+        Failed,
+    }
+
+    /// <summary>Available models from <c>/v1/models</c>, plus any
+    /// synthetic entries that <see cref="ResumeSessionAsync"/> needed to
+    /// add for sessions that reference models not in the live list.</summary>
+    public ObservableCollection<ModelOptionVm> AvailableModels { get; } = [];
+
+    [ObservableProperty]
+    public partial string? SelectedModelId { get; set; }
+
+    [ObservableProperty]
+    public partial ModelLoadState ModelLoadStatus { get; set; } = ModelLoadState.NotLoaded;
+
+    /// <summary>True when the picker is editable: a fresh (un-created)
+    /// session AND the send pipeline isn't busy AND models have loaded.
+    /// Once any of those flips, the picker swaps to the read-only chip.</summary>
+    public bool CanPickModel => SessionId is null
+                             && !IsBusy
+                             && ModelLoadStatus == ModelLoadState.Loaded;
+
+    /// <summary>Convenience inverse for the read-only chip's visibility
+    /// binding — saves a converter on the XAML side.</summary>
+    public bool IsModelLocked => !CanPickModel;
+
+    /// <summary>True while <see cref="EnsureModelsLoadedAsync"/> is
+    /// fetching. Drives a small inline progress indicator next to the
+    /// picker.</summary>
+    public bool ModelsAreLoading => ModelLoadStatus == ModelLoadState.Loading;
+
+    /// <summary>True when <c>/v1/models</c> failed. The picker falls
+    /// back to the global default; user can retry via
+    /// <see cref="ReloadModelsCommand"/>.</summary>
+    public bool ModelsFailed => ModelLoadStatus == ModelLoadState.Failed;
+
+    /// <summary>What the read-only chip renders. Prefers the matched
+    /// option's display name (handles synthetic "(unavailable)" suffix
+    /// and "Model not reported"); falls back to the raw id, then to a
+    /// generic label.</summary>
+    public string SelectedModelDisplay
+    {
+        get
+        {
+            var match = AvailableModels.FirstOrDefault(m => m.Id == SelectedModelId);
+            if (match is not null) return match.DisplayName;
+            if (!string.IsNullOrWhiteSpace(SelectedModelId)) return SelectedModelId!;
+            return "(default)";
+        }
+    }
+
     partial void OnSessionUsageChanged(UsageStats? value)
     {
         OnPropertyChanged(nameof(SessionUsageLine));
@@ -138,12 +225,49 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SessionUsageTooltip));
     }
 
-    public ChatViewModel(HermesApiClient api, HermesStreamingClient stream, DispatcherQueue dispatcher)
+    partial void OnSessionIdChanged(string? value)
+    {
+        OnPropertyChanged(nameof(CanPickModel));
+        OnPropertyChanged(nameof(IsModelLocked));
+    }
+
+    partial void OnSelectedModelIdChanged(string? value)
+    {
+        if (!_suppressModelPickFlag)
+        {
+            // The UI raised this — the user actually picked something.
+            // From here on we'll pass the model on create-session.
+            _userExplicitlyPicked = true;
+        }
+        OnPropertyChanged(nameof(SelectedModelDisplay));
+    }
+
+    partial void OnModelLoadStatusChanged(ModelLoadState value)
+    {
+        OnPropertyChanged(nameof(CanPickModel));
+        OnPropertyChanged(nameof(IsModelLocked));
+        OnPropertyChanged(nameof(ModelsAreLoading));
+        OnPropertyChanged(nameof(ModelsFailed));
+        ReloadModelsCommand.NotifyCanExecuteChanged();
+    }
+
+    public ChatViewModel(HermesApiClient api, HermesStreamingClient stream, HermesConfig config, DispatcherQueue dispatcher)
     {
         _api = api;
         _stream = stream;
+        _config = config;
         _dispatcher = dispatcher;
         Messages.CollectionChanged += (_, __) => OnPropertyChanged(nameof(HasMessages));
+        // SelectedModelDisplay reads from AvailableModels — re-raise on
+        // membership change so the read-only chip's text refreshes when
+        // EnsureSelectedModelPresent adds a synthetic entry.
+        AvailableModels.CollectionChanged += (_, __) => OnPropertyChanged(nameof(SelectedModelDisplay));
+
+        // Seed picker to the global default, marked as programmatic so the
+        // _userExplicitlyPicked flag stays false.
+        _suppressModelPickFlag = true;
+        SelectedModelId = _config.ModelName;
+        _suppressModelPickFlag = false;
     }
 
     public bool CanSend => !IsBusy && !string.IsNullOrWhiteSpace(Composer);
@@ -153,6 +277,10 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     {
         SendCommand.NotifyCanExecuteChanged();
         StopCommand.NotifyCanExecuteChanged();
+        // Picker locks while a send is in flight so the user can't change
+        // model between EnsureSessionAsync read and the server response.
+        OnPropertyChanged(nameof(CanPickModel));
+        OnPropertyChanged(nameof(IsModelLocked));
     }
 
     [RelayCommand(CanExecute = nameof(CanSend))]
@@ -168,6 +296,12 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
 
     private async Task SendCoreAsync()
     {
+        // Snapshot model intent BEFORE we mutate any UI state. The picker
+        // is supposed to lock once IsBusy=true, but if the user managed to
+        // change it between this read and EnsureSessionAsync's create call
+        // the snapshot still captures their original intent.
+        var modelOverride = _userExplicitlyPicked ? SelectedModelId : null;
+
         var text = (Composer ?? string.Empty).Trim();
         if (text.Length == 0) return;
 
@@ -191,7 +325,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         IsBusy = true;
         StatusText = "Streaming…";
 
-        if (!await EnsureSessionAsync(assistant)) return;
+        if (!await EnsureSessionAsync(assistant, modelOverride)) return;
 
         StartFlushTimer();
 
@@ -265,6 +399,27 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         SessionUsage = null;
         SessionCostUsd = null;
         _seenRunIds.Clear();
+
+        // Drop any synthetic entries left over from a prior resume; the
+        // picker is now re-enabled for a fresh chat and stale "(unavailable)"
+        // / "Model not reported" rows have no meaning here.
+        for (int i = AvailableModels.Count - 1; i >= 0; i--)
+        {
+            if (AvailableModels[i].IsSynthetic) AvailableModels.RemoveAt(i);
+        }
+
+        // Reset picker to global default. Programmatic — don't mark as
+        // user-picked.
+        _suppressModelPickFlag = true;
+        SelectedModelId = _config.ModelName;
+        _suppressModelPickFlag = false;
+        _userExplicitlyPicked = false;
+
+        // If /v1/models hasn't loaded yet OR loaded but the configured
+        // default isn't in the list, add a synthetic so the read-only
+        // chip can still render something sensible.
+        EnsureSelectedModelPresent();
+
         StatusText = "Ready";
     }
 
@@ -354,8 +509,127 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
             SessionCostUsd = null;
         }
 
+        // 6. Seed model picker from the session's effective model. If the
+        //    server didn't populate it (older session, gateway gap, etc.)
+        //    show a synthetic "Model not reported" rather than silently
+        //    falling back to global default — that would misrepresent
+        //    what the session is actually running. Picker is locked
+        //    anyway (SessionId is non-null), so the synthetic is just a
+        //    display artifact.
+        _suppressModelPickFlag = true;
+        _userExplicitlyPicked = false;
+        // Scrub any synthetics from a prior resume so they don't pile up.
+        for (int i = AvailableModels.Count - 1; i >= 0; i--)
+        {
+            if (AvailableModels[i].IsSynthetic) AvailableModels.RemoveAt(i);
+        }
+        var sessionModel = detail?.Session?.Model;
+        if (!string.IsNullOrWhiteSpace(sessionModel))
+        {
+            SelectedModelId = sessionModel;
+            EnsureSelectedModelPresent();
+        }
+        else
+        {
+            // Add the "Model not reported" placeholder and select it (id null).
+            AvailableModels.Insert(0, ModelOptionVm.Unreported());
+            SelectedModelId = null;
+        }
+        _suppressModelPickFlag = false;
+
         IsBusy = false;
         StatusText = "Ready";
+    }
+
+    // -------------------------------------------------------------------
+    // Model picker — load lifecycle
+    // -------------------------------------------------------------------
+
+    /// <summary>
+    /// Loads <c>/v1/models</c> into <see cref="AvailableModels"/> if not
+    /// already loaded / loading. Safe to call repeatedly from page
+    /// navigation handlers: concurrent calls coalesce onto the same
+    /// in-flight task. Never throws — fire-and-forget callers see a
+    /// completed task even on failure (state goes to
+    /// <see cref="ModelLoadState.Failed"/>).
+    /// </summary>
+    public Task EnsureModelsLoadedAsync()
+    {
+        if (ModelLoadStatus == ModelLoadState.Loaded) return Task.CompletedTask;
+        if (_modelsLoadTask is { IsCompleted: false } inflight) return inflight;
+        _modelsLoadTask = LoadModelsAsync();
+        return _modelsLoadTask;
+    }
+
+    /// <summary>Force-restarts the model fetch even from the
+    /// <see cref="ModelLoadState.Loaded"/> state. Bound to a refresh
+    /// button next to the picker when the prior load failed.</summary>
+    [RelayCommand(CanExecute = nameof(CanReloadModels))]
+    private Task ReloadModelsAsync()
+    {
+        _modelsLoadTask = LoadModelsAsync();
+        return _modelsLoadTask;
+    }
+
+    public bool CanReloadModels => ModelLoadStatus != ModelLoadState.Loading;
+
+    private async Task LoadModelsAsync()
+    {
+        ModelLoadStatus = ModelLoadState.Loading;
+        try
+        {
+            var list = await _api.GetModelsAsync(CancellationToken.None).ConfigureAwait(true);
+            if (list?.Data is { } data)
+            {
+                // Preserve any synthetic entries (from a prior Resume) so
+                // they survive the refresh — EnsureSelectedModelPresent
+                // below will re-add the one for SelectedModelId if it
+                // got wiped, but a "Model not reported" placeholder
+                // (Id=null) needs to be re-added explicitly because the
+                // lookup keys on Id.
+                var hadUnreported = AvailableModels.Any(m => m.IsSynthetic && m.Id is null);
+
+                AvailableModels.Clear();
+                foreach (var m in data)
+                {
+                    AvailableModels.Add(ModelOptionVm.FromModel(m));
+                }
+                if (hadUnreported)
+                {
+                    AvailableModels.Insert(0, ModelOptionVm.Unreported());
+                }
+                EnsureSelectedModelPresent();
+                ModelLoadStatus = ModelLoadState.Loaded;
+            }
+            else
+            {
+                ModelLoadStatus = ModelLoadState.Failed;
+            }
+        }
+        catch
+        {
+            // Fire-and-forget contract: callers (OnNavigatedTo) discard
+            // this task, so an unhandled throw here would surface as an
+            // unobserved-task exception. Token-telemetry and model-list
+            // failures are non-fatal — fall back to the global default.
+            ModelLoadStatus = ModelLoadState.Failed;
+        }
+    }
+
+    /// <summary>
+    /// If <see cref="SelectedModelId"/> is non-null but not present in
+    /// <see cref="AvailableModels"/>, inject a synthetic
+    /// <see cref="ModelOptionVm.Unavailable"/> entry so the ComboBox /
+    /// read-only chip can render the selected value. Called from every
+    /// path that mutates either the list or the selection — including
+    /// post-Resume seed, post-Create-session echo, and post-LoadModels
+    /// refresh.
+    /// </summary>
+    private void EnsureSelectedModelPresent()
+    {
+        if (string.IsNullOrEmpty(SelectedModelId)) return;
+        if (AvailableModels.Any(m => m.Id == SelectedModelId)) return;
+        AvailableModels.Insert(0, ModelOptionVm.Unavailable(SelectedModelId));
     }
 
     /// <summary>Marshals one parsed SSE event onto the UI thread. The target
@@ -496,10 +770,16 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     /// Reports failures inline on the assistant message and resets transient
     /// status so the caller can just <c>return</c> on a false result.
     /// </summary>
+    /// <param name="assistant">The streaming-target message — used for
+    /// inline error reporting if create fails.</param>
+    /// <param name="modelOverride">Caller-snapshotted model id (or null to
+    /// let the server pick its current default). Snapshotted in
+    /// <c>SendCoreAsync</c> so picker edits during the in-flight create
+    /// can't swap it.</param>
     /// <returns><see langword="false"/> if a session couldn't be obtained and
     /// the send should be aborted; <see langword="true"/> if SessionId is
     /// populated and streaming may proceed.</returns>
-    private async Task<bool> EnsureSessionAsync(MessageVm assistant)
+    private async Task<bool> EnsureSessionAsync(MessageVm assistant, string? modelOverride)
     {
         if (!string.IsNullOrEmpty(SessionId)) return true;
 
@@ -508,9 +788,21 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         // are server-enforced unique).
         try
         {
-            var sess = await _api.CreateSessionAsync(null, CancellationToken.None);
+            var sess = await _api.CreateSessionAsync(null, modelOverride, CancellationToken.None);
             SessionId = sess?.Id;
             SessionTitle = sess?.Title;
+
+            // Mirror the server's effective model back into the picker so
+            // the read-only chip shows what's actually running (server may
+            // have normalized our id or filled the default when we passed
+            // null). Programmatic — don't flip _userExplicitlyPicked.
+            if (!string.IsNullOrWhiteSpace(sess?.Model))
+            {
+                _suppressModelPickFlag = true;
+                SelectedModelId = sess.Model;
+                _suppressModelPickFlag = false;
+                EnsureSelectedModelPresent();
+            }
         }
         catch (Exception ex)
         {
