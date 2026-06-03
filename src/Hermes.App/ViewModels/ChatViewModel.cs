@@ -171,32 +171,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         IsBusy = true;
         StatusText = "Streaming…";
 
-        // Lazily create a session on first send. We don't pass a title — let the
-        // gateway auto-generate one from the first message so we never collide
-        // with an existing session (titles are server-enforced unique).
-        if (string.IsNullOrEmpty(SessionId))
-        {
-            try
-            {
-                var sess = await _api.CreateSessionAsync(null, CancellationToken.None);
-                SessionId = sess?.Id;
-                SessionTitle = sess?.Title;
-            }
-            catch (Exception ex)
-            {
-                FinishAssistant(MessageState.Failed, $"\n\n*Could not create session: {ex.Message}*");
-                IsBusy = false;
-                StatusText = "Error";
-                return;
-            }
-            if (string.IsNullOrEmpty(SessionId))
-            {
-                FinishAssistant(MessageState.Failed, "\n\n*Server did not return a session id.*");
-                IsBusy = false;
-                StatusText = "Error";
-                return;
-            }
-        }
+        if (!await EnsureSessionAsync(assistant)) return;
 
         StartFlushTimer();
 
@@ -323,53 +298,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         //    rendered: the message-list API doesn't carry enough info
         //    (original tool args) to faithfully reconstruct tool cards yet.
         //    Reasoning, where present, is preserved on the assistant VM.
-        var hydrated = new System.Collections.Generic.List<MessageVm>();
-        if (msgs?.Data is { } rows)
-        {
-            foreach (var m in rows.OrderBy(r => r.Timestamp ?? 0))
-            {
-                MessageRole role;
-                if (string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))
-                    role = MessageRole.User;
-                else if (string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))
-                    role = MessageRole.Assistant;
-                else
-                    continue;
-
-                var ts = m.Timestamp is double t
-                    ? DateTimeOffset.FromUnixTimeMilliseconds((long)(t * 1000))
-                    : DateTimeOffset.Now;
-
-                var vm = new MessageVm
-                {
-                    Role = role,
-                    Content = m.Content ?? string.Empty,
-                    State = MessageState.Completed,
-                    Timestamp = ts,
-                };
-                // Preserve reasoning if the server persisted it (matches the
-                // chat UX's existing reasoning plumbing — still hidden by
-                // default per the earlier UX decision but data is intact).
-                var reason = m.ReasoningContent ?? m.Reasoning;
-                if (!string.IsNullOrEmpty(reason))
-                {
-                    vm.ReasoningBuffer.Append(reason);
-                    vm.Reasoning = reason;
-                }
-                // Hydrate a best-effort per-turn Usage from the persisted
-                // token_count. The server stores a single total per message
-                // (no in/out split for individual turns), so we put user
-                // counts on the input side and assistant counts on the
-                // output side — close enough to make the footer informative.
-                if (m.TokenCount is int tc && tc > 0)
-                {
-                    vm.Usage = role == MessageRole.User
-                        ? new UsageStats(InputTokens: tc)
-                        : new UsageStats(OutputTokens: tc);
-                }
-                hydrated.Add(vm);
-            }
-        }
+        var hydrated = HydrateMessagesFromServer(msgs);
 
         // 4. Atomic swap on the UI thread (we're already on it — public
         //    method called from a UI handler).
@@ -412,106 +341,215 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         {
             switch (evt)
             {
-                case AssistantDeltaEvent d:
-                    msg.Buffer.Append(d.Text);
-                    // Flush timer pulls .Content from .Buffer on a cadence.
-                    break;
-
-                case ToolStartedEvent ts:
-                    msg.ToolCalls.Add(new ToolCallVm
-                    {
-                        CallId = ts.CallId,
-                        // Fall back to "(unknown)" only if every name field was
-                        // missing — this used to be "tool" but that hid the
-                        // bug where the parser was looking at the wrong field.
-                        Name = !string.IsNullOrEmpty(ts.Name) ? ts.Name! : "(unknown)",
-                        ArgumentsJson = PrettyJson(ts.ArgumentsJson),
-                        Preview = ts.Preview,
-                        IsRunning = true,
-                    });
-                    break;
-
-                case ToolProgressEvent tp:
-                    // "_thinking" is reasoning, not a real tool — accumulate to the
-                    // reasoning channel so the message has a single collapsible
-                    // "Thinking" trail rather than a never-completing tool card.
-                    if (tp.Name == "_thinking" && !string.IsNullOrEmpty(tp.Message))
-                    {
-                        msg.ReasoningBuffer.Append(tp.Message);
-                        break;
-                    }
-                    var pcard = FindCard(msg, tp.CallId, tp.Name);
-                    if (pcard is not null) pcard.Progress = tp.Message;
-                    break;
-
-                case ToolCompletedEvent tc:
-                    var ccard = FindCard(msg, tc.CallId, tc.Name);
-                    if (ccard is not null)
-                    {
-                        // Some gateway paths don't emit an output payload at all
-                        // (the api_server direct path only sends tool/duration/error).
-                        // Don't blank a previously-set Output in that case.
-                        var newOutput = tc.OutputText ?? PrettyJson(tc.OutputJson);
-                        if (!string.IsNullOrEmpty(newOutput)) ccard.Output = newOutput;
-                        ccard.IsRunning = false;
-                        ccard.IsError = tc.IsError;
-                        ccard.DurationSeconds = tc.DurationSeconds;
-                        // Late-bind the name if tool.started didn't carry one
-                        // but tool.completed did — keeps the card from being
-                        // stuck at "(unknown)" forever.
-                        if (ccard.Name == "(unknown)" && !string.IsNullOrEmpty(tc.Name))
-                            ccard.Name = tc.Name!;
-                    }
-                    break;
-
-                case AssistantCompletedEvent ac:
-                    // The terminal assistant.completed event carries the FULL
-                    // final content. Treat it as authoritative — overwrite our
-                    // (possibly-lossy) delta buffer so the bubble is never
-                    // blank even if some delta events were dropped/raced.
-                    if (!string.IsNullOrEmpty(ac.Content))
-                    {
-                        msg.Buffer.Clear();
-                        msg.Buffer.Append(ac.Content);
-                        msg.Content = ac.Content!;
-                    }
-                    break;
-
-                case RunCompletedEvent rc:
-                    // Belt-and-braces: run.completed also carries the final
-                    // assistant content in its messages[] array. Use it as a
-                    // last-resort fallback if everything before us was empty.
-                    if (!string.IsNullOrEmpty(rc.FinalAssistantContent) && msg.Buffer.Length == 0)
-                    {
-                        msg.Buffer.Append(rc.FinalAssistantContent);
-                        msg.Content = rc.FinalAssistantContent!;
-                    }
-                    else if (!string.IsNullOrEmpty(rc.Output) && msg.Buffer.Length == 0)
-                    {
-                        msg.Buffer.Append(rc.Output);
-                        msg.Content = rc.Output!;
-                    }
-
-                    // Token accounting. Per-turn lands on the bubble; the
-                    // session total in the header rolls in whatever new
-                    // numbers arrived (preserving anything Resume seeded).
-                    if (rc.Usage is { HasAny: true } u)
-                    {
-                        msg.Usage = u;
-                        SessionUsage = SessionUsage is null ? u : SessionUsage.Add(u);
-                    }
-                    break;
-
-                case StreamErrorEvent err:
-                    msg.Buffer.Append("\n\n*Server error: ").Append(err.Message).Append('*');
-                    msg.State = MessageState.Failed;
-                    break;
-
-                case UnknownStreamEvent _:
-                    // No-op; logged via raw fields for diagnostics if needed.
-                    break;
+                case AssistantDeltaEvent d:      OnAssistantDelta(msg, d); break;
+                case ToolStartedEvent ts:        OnToolStarted(msg, ts); break;
+                case ToolProgressEvent tp:       OnToolProgress(msg, tp); break;
+                case ToolCompletedEvent tc:      OnToolCompleted(msg, tc); break;
+                case AssistantCompletedEvent ac: OnAssistantCompleted(msg, ac); break;
+                case RunCompletedEvent rc:       OnRunCompleted(msg, rc); break;
+                case StreamErrorEvent err:       OnStreamError(msg, err); break;
+                case UnknownStreamEvent _:       /* logged via raw fields if needed */ break;
             }
         });
+    }
+
+    private static void OnAssistantDelta(MessageVm msg, AssistantDeltaEvent d)
+    {
+        // Append-only into the buffer; the flush timer pulls Content from Buffer
+        // on a 60ms cadence so we're not raising INPC per token.
+        msg.Buffer.Append(d.Text);
+    }
+
+    private static void OnToolStarted(MessageVm msg, ToolStartedEvent ts)
+    {
+        msg.ToolCalls.Add(new ToolCallVm
+        {
+            CallId = ts.CallId,
+            // Fall back to "(unknown)" only if every name field was missing —
+            // this used to be "tool" but that hid the bug where the parser was
+            // looking at the wrong field.
+            Name = !string.IsNullOrEmpty(ts.Name) ? ts.Name! : "(unknown)",
+            ArgumentsJson = PrettyJson(ts.ArgumentsJson),
+            Preview = ts.Preview,
+            IsRunning = true,
+        });
+    }
+
+    private static void OnToolProgress(MessageVm msg, ToolProgressEvent tp)
+    {
+        // "_thinking" is reasoning, not a real tool — accumulate to the
+        // reasoning channel so the message has a single collapsible
+        // "Thinking" trail rather than a never-completing tool card.
+        if (tp.Name == "_thinking" && !string.IsNullOrEmpty(tp.Message))
+        {
+            msg.ReasoningBuffer.Append(tp.Message);
+            return;
+        }
+        var card = FindCard(msg, tp.CallId, tp.Name);
+        if (card is not null) card.Progress = tp.Message;
+    }
+
+    private static void OnToolCompleted(MessageVm msg, ToolCompletedEvent tc)
+    {
+        var card = FindCard(msg, tc.CallId, tc.Name);
+        if (card is null) return;
+
+        // Some gateway paths don't emit an output payload at all (the
+        // api_server direct path only sends tool/duration/error). Don't
+        // blank a previously-set Output in that case.
+        var newOutput = tc.OutputText ?? PrettyJson(tc.OutputJson);
+        if (!string.IsNullOrEmpty(newOutput)) card.Output = newOutput;
+        card.IsRunning = false;
+        card.IsError = tc.IsError;
+        card.DurationSeconds = tc.DurationSeconds;
+        // Late-bind the name if tool.started didn't carry one but
+        // tool.completed did — keeps the card from being stuck at
+        // "(unknown)" forever.
+        if (card.Name == "(unknown)" && !string.IsNullOrEmpty(tc.Name))
+            card.Name = tc.Name!;
+    }
+
+    private static void OnAssistantCompleted(MessageVm msg, AssistantCompletedEvent ac)
+    {
+        // The terminal assistant.completed event carries the FULL final
+        // content. Treat it as authoritative — overwrite our (possibly-lossy)
+        // delta buffer so the bubble is never blank even if some delta events
+        // were dropped/raced.
+        if (string.IsNullOrEmpty(ac.Content)) return;
+        msg.Buffer.Clear();
+        msg.Buffer.Append(ac.Content);
+        msg.Content = ac.Content!;
+    }
+
+    private void OnRunCompleted(MessageVm msg, RunCompletedEvent rc)
+    {
+        // Belt-and-braces: run.completed also carries the final assistant
+        // content in its messages[] array. Use it as a last-resort fallback
+        // if everything before us was empty.
+        if (!string.IsNullOrEmpty(rc.FinalAssistantContent) && msg.Buffer.Length == 0)
+        {
+            msg.Buffer.Append(rc.FinalAssistantContent);
+            msg.Content = rc.FinalAssistantContent!;
+        }
+        else if (!string.IsNullOrEmpty(rc.Output) && msg.Buffer.Length == 0)
+        {
+            msg.Buffer.Append(rc.Output);
+            msg.Content = rc.Output!;
+        }
+
+        // Token accounting. Per-turn lands on the bubble; the session total
+        // in the header rolls in whatever new numbers arrived (preserving
+        // anything Resume seeded).
+        if (rc.Usage is { HasAny: true } u)
+        {
+            msg.Usage = u;
+            SessionUsage = SessionUsage is null ? u : SessionUsage.Add(u);
+        }
+    }
+
+    private static void OnStreamError(MessageVm msg, StreamErrorEvent err)
+    {
+        msg.Buffer.Append("\n\n*Server error: ").Append(err.Message).Append('*');
+        msg.State = MessageState.Failed;
+    }
+
+    /// <summary>
+    /// Lazily creates a server session on first send and adopts its id/title.
+    /// Reports failures inline on the assistant message and resets transient
+    /// status so the caller can just <c>return</c> on a false result.
+    /// </summary>
+    /// <returns><see langword="false"/> if a session couldn't be obtained and
+    /// the send should be aborted; <see langword="true"/> if SessionId is
+    /// populated and streaming may proceed.</returns>
+    private async Task<bool> EnsureSessionAsync(MessageVm assistant)
+    {
+        if (!string.IsNullOrEmpty(SessionId)) return true;
+
+        // We don't pass a title — let the gateway auto-generate one from the
+        // first message so we never collide with an existing session (titles
+        // are server-enforced unique).
+        try
+        {
+            var sess = await _api.CreateSessionAsync(null, CancellationToken.None);
+            SessionId = sess?.Id;
+            SessionTitle = sess?.Title;
+        }
+        catch (Exception ex)
+        {
+            FinishAssistant(MessageState.Failed, $"\n\n*Could not create session: {ex.Message}*");
+            IsBusy = false;
+            StatusText = "Error";
+            return false;
+        }
+
+        if (string.IsNullOrEmpty(SessionId))
+        {
+            FinishAssistant(MessageState.Failed, "\n\n*Server did not return a session id.*");
+            IsBusy = false;
+            StatusText = "Error";
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Converts a server message list into render-ready <see cref="MessageVm"/>s.
+    /// Only user / assistant turns are produced — the message-list API doesn't
+    /// carry enough information (original tool arguments) to faithfully
+    /// reconstruct tool cards yet, and rows with other roles are skipped.
+    /// Reasoning and best-effort per-turn token usage are preserved when
+    /// the server persisted them.
+    /// </summary>
+    private static System.Collections.Generic.List<MessageVm> HydrateMessagesFromServer(SessionMessageList? msgs)
+    {
+        var hydrated = new System.Collections.Generic.List<MessageVm>();
+        if (msgs?.Data is not { } rows) return hydrated;
+
+        foreach (var m in rows.OrderBy(r => r.Timestamp ?? 0))
+        {
+            MessageRole role;
+            if (string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))
+                role = MessageRole.User;
+            else if (string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                role = MessageRole.Assistant;
+            else
+                continue;
+
+            var ts = m.Timestamp is double t
+                ? DateTimeOffset.FromUnixTimeMilliseconds((long)(t * 1000))
+                : DateTimeOffset.Now;
+
+            var vm = new MessageVm
+            {
+                Role = role,
+                Content = m.Content ?? string.Empty,
+                State = MessageState.Completed,
+                Timestamp = ts,
+            };
+            // Preserve reasoning if the server persisted it (matches the
+            // chat UX's existing reasoning plumbing — still hidden by
+            // default per the earlier UX decision but data is intact).
+            var reason = m.ReasoningContent ?? m.Reasoning;
+            if (!string.IsNullOrEmpty(reason))
+            {
+                vm.ReasoningBuffer.Append(reason);
+                vm.Reasoning = reason;
+            }
+            // Hydrate a best-effort per-turn Usage from the persisted
+            // token_count. The server stores a single total per message
+            // (no in/out split for individual turns), so we put user
+            // counts on the input side and assistant counts on the
+            // output side — close enough to make the footer informative.
+            if (m.TokenCount is int tc && tc > 0)
+            {
+                vm.Usage = role == MessageRole.User
+                    ? new UsageStats(InputTokens: tc)
+                    : new UsageStats(OutputTokens: tc);
+            }
+            hydrated.Add(vm);
+        }
+        return hydrated;
     }
 
     private static ToolCallVm? FindCard(MessageVm msg, string? callId, string? name)
