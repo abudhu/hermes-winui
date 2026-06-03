@@ -101,8 +101,27 @@ public sealed partial class SettingsPage : Page
     private void OpenConfig_Click(object sender, RoutedEventArgs e)
     {
         var dir = _api.Config.ConfigDirectory;
-        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
-        try { Process.Start("explorer.exe", $"\"{dir}\""); } catch { }
+        if (string.IsNullOrEmpty(dir))
+        {
+            ShowStatus(InfoBarSeverity.Warning, "No config directory",
+                "Hermes hasn't told us where its config lives yet — start the gateway and try again.");
+            return;
+        }
+        if (!Directory.Exists(dir))
+        {
+            ShowStatus(InfoBarSeverity.Warning, "Config directory missing",
+                $"Expected {dir} but it doesn't exist on disk.");
+            return;
+        }
+        try
+        {
+            Process.Start("explorer.exe", $"\"{dir}\"");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus(InfoBarSeverity.Error, "Couldn't open folder",
+                $"Explorer refused to open {dir}: {ex.Message}");
+        }
     }
 
     // ---- dirty tracking -----------------------------------------------------
