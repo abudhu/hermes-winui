@@ -6,7 +6,9 @@
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:systemai="http://schemas.microsoft.com/appx/manifest/systemai/windows10"
-  IgnorableNamespaces="uap rescap systemai">
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  IgnorableNamespaces="uap rescap systemai com desktop">
 
   <Identity
     Name="Hermes.App"
@@ -43,6 +45,33 @@
         <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
       </uap:VisualElements>
+
+      <!--
+        Toast notification activation. Packaged WinAppSDK apps need both
+        of the following extensions present at the same CLSID so that
+        Windows can route a toast click back to our process via COM:
+          1. windows.toastNotificationActivation registers the activator
+             with the Action Center / notifications platform.
+          2. windows.comServer maps the CLSID to our exe with the magic
+             "AppNotificationActivated:" argument (prefixed by four dashes)
+             that the WinAppSDK AppNotificationManager looks for at startup.
+        The CLSID below is fixed for this app — DO NOT regenerate. Changing
+        it would break any previously-shown notifications whose Action
+        Center entries still reference the old CLSID. See
+        https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/notifications/app-notifications/app-notifications-quickstart.
+      -->
+      <Extensions>
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation ToastActivatorCLSID="2A8C4F1B-9D7E-4B5C-A3E8-7C9F2D4A6B1E" />
+        </desktop:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="Hermes.App.exe" DisplayName="Hermes Toast Activator" Arguments="----AppNotificationActivated:">
+              <com:Class Id="2A8C4F1B-9D7E-4B5C-A3E8-7C9F2D4A6B1E" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
     </Application>
   </Applications>
 

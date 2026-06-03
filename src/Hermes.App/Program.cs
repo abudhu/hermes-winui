@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using Hermes.App.Services;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
@@ -39,6 +40,16 @@ public static class Program
         // generated Main does this for us; since we replaced it, we have
         // to do it ourselves first.
         WinRT.ComWrappersSupport.InitializeComWrappers();
+
+        // AppNotificationManager.Register() must be called BEFORE
+        // AppInstance.GetActivatedEventArgs() — per the WinAppSDK
+        // app-notifications contract — otherwise cold-start activations
+        // from a toast click are silently dropped on the floor.
+        // DecideRedirection() below calls GetActivatedEventArgs as part
+        // of the single-instance check, so this has to run first.
+        // RegisterEarly is idempotent; even the secondary process that
+        // immediately exits via redirection can safely make this call.
+        NotificationService.RegisterEarly();
 
         if (DecideRedirection())
         {

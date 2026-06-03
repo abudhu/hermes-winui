@@ -1,10 +1,14 @@
 using System;
 using Hermes.ApiClient;
+using Hermes.App.Pages;
+using Hermes.App.Services;
 using Hermes.App.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.Windows.AppLifecycle;
 
 namespace Hermes.App;
@@ -71,6 +75,14 @@ public partial class App : Application
         // is required for SessionsPage's "Resume conversation" handoff to work.
         services.AddSingleton<ChatViewModel>();
 
+        // NotificationService is the in-app surface for AppNotificationManager
+        // (the WinAppSDK toast pipeline). The COM activator is registered
+        // separately in Program.Main (RegisterEarly) so the static
+        // NotificationInvoked subscription is live before any
+        // GetActivatedEventArgs call. This instance just bridges the
+        // pending activations into the live UI handler.
+        services.AddSingleton<NotificationService>();
+
         return services.BuildServiceProvider();
     }
 
@@ -78,6 +90,119 @@ public partial class App : Application
     {
         MainWindow = new MainWindow();
         MainWindow.Activate();
+
+        // Attach the deep-link bridge after MainWindow exists so the
+        // handler always has a live window to navigate. The service
+        // drains any toast activations that arrived during cold start
+        // (between Program.Main's RegisterEarly and now) before
+        // returning from this call.
+        var notifications = Services.GetRequiredService<NotificationService>();
+        notifications.AttachJobHandler(HandleJobNotificationActivated);
+    }
+
+    /// <summary>
+    /// Called by <see cref="NotificationService"/> on a thread-pool callback
+    /// when the user clicks a "job finished" toast. Marshals to the UI
+    /// dispatcher, then either tells the open <see cref="JobsPage"/> to
+    /// select the row, or stashes a pending id and flips the NavView
+    /// selection so the page picks it up in OnNavigatedTo.
+    ///
+    /// <para>Walks the visual tree to grab MainWindow's named NavView and
+    /// Frame rather than touching MainWindow's source — keeps this
+    /// additive per the cross-session contract that MainWindow is owned
+    /// by another work-stream.</para>
+    /// </summary>
+    private static void HandleJobNotificationActivated(string jobId)
+    {
+        var window = MainWindow;
+        if (window is null) return;
+
+        window.DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                if (window.Content is not FrameworkElement root) return;
+
+                var navView = FindNavigationView(root);
+                var navFrame = FindFrame(root);
+                if (navView is null || navFrame is null) return;
+
+                // Fast path: already on JobsPage. Tell it to apply the
+                // selection directly — flipping NavView.SelectedItem to
+                // the already-selected item is a no-op and would never
+                // reach JobsPage.OnNavigatedTo.
+                if (navFrame.Content is JobsPage liveJobsPage)
+                {
+                    liveJobsPage.SelectJobById(jobId);
+                }
+                else
+                {
+                    // Stash the id before flipping selection — JobsPage
+                    // reads PendingSelectedJobId in OnNavigatedTo after
+                    // its initial RefreshAsync resolves the row.
+                    JobsPage.PendingSelectedJobId = jobId;
+                    foreach (var item in navView.MenuItems)
+                    {
+                        if (item is NavigationViewItem nvi && (nvi.Tag as string) == "jobs")
+                        {
+                            navView.SelectedItem = nvi;
+                            break;
+                        }
+                    }
+                }
+
+                // After deep-linking, also lift the window — same gesture
+                // as OnInstanceActivated. The user clicked a toast; they
+                // expect to see Hermes in front of them.
+                if (window.AppWindow?.Presenter is OverlappedPresenter presenter
+                    && presenter.State == OverlappedPresenterState.Minimized)
+                {
+                    presenter.Restore();
+                }
+                window.AppWindow?.Show();
+                window.Activate();
+                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+                if (hwnd != IntPtr.Zero)
+                {
+                    NativeMethods.SetForegroundWindow(hwnd);
+                }
+            }
+            catch
+            {
+                // Background-thread originated — never throw out of this
+                // callback. The worst-case fallback is that the user
+                // navigates to Jobs manually, which is fine.
+            }
+        });
+    }
+
+    /// <summary>Finds the named <c>NavView</c> inside MainWindow's tree.
+    /// Walks the namescope first (cheap) and falls back to a visual-tree
+    /// scan for robustness — the cross-session contract bars us from
+    /// adding a public accessor on MainWindow.</summary>
+    private static NavigationView? FindNavigationView(FrameworkElement root)
+    {
+        if (root.FindName("NavView") is NavigationView named) return named;
+        return FindDescendant<NavigationView>(root);
+    }
+
+    private static Frame? FindFrame(FrameworkElement root)
+    {
+        if (root.FindName("NavFrame") is Frame named) return named;
+        return FindDescendant<Frame>(root);
+    }
+
+    private static T? FindDescendant<T>(DependencyObject parent) where T : DependencyObject
+    {
+        var count = VisualTreeHelper.GetChildrenCount(parent);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) return match;
+            var nested = FindDescendant<T>(child);
+            if (nested is not null) return nested;
+        }
+        return null;
     }
 
     /// <summary>
