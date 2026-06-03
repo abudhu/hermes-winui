@@ -171,4 +171,51 @@ public class JobModelTests
         Assert.Equal("x", env.Job.Name);
         Assert.True(env.Job.Enabled);
     }
+
+    [Fact]
+    public void Serialize_UpdateJobRequest_OmitsNulls()
+    {
+        // PATCH semantics: only the fields actually populated should hit
+        // the wire. Sending an explicit JSON null could be interpreted by
+        // the gateway as "clear this field" rather than "no change".
+        var req = new UpdateJobRequest(Name: "renamed");
+        var json = JsonSerializer.Serialize(req, Opts);
+        Assert.Contains("\"name\":\"renamed\"", json);
+        Assert.DoesNotContain("\"schedule\"", json);
+        Assert.DoesNotContain("\"prompt\"", json);
+        Assert.DoesNotContain("\"model\"", json);
+        Assert.DoesNotContain("\"deliver\"", json);
+        Assert.DoesNotContain("\"enabled\"", json);
+    }
+
+    [Fact]
+    public void Serialize_UpdateJobRequest_SendsExplicitEnabledFalse()
+    {
+        // Edit-mode save needs to be able to flip enabled off — the
+        // explicit boolean has to survive null-omit serialization.
+        var req = new UpdateJobRequest(Enabled: false);
+        var json = JsonSerializer.Serialize(req, Opts);
+        Assert.Contains("\"enabled\":false", json);
+    }
+
+    [Fact]
+    public void Serialize_UpdateJobRequest_FullForm()
+    {
+        // Every editable field present at once — mirrors what the UI
+        // sends from a Save click.
+        var req = new UpdateJobRequest(
+            Name: "n",
+            Schedule: "30m",
+            Prompt: "p",
+            Model: "m",
+            Deliver: "telegram",
+            Enabled: true);
+        var json = JsonSerializer.Serialize(req, Opts);
+        Assert.Contains("\"name\":\"n\"", json);
+        Assert.Contains("\"schedule\":\"30m\"", json);
+        Assert.Contains("\"prompt\":\"p\"", json);
+        Assert.Contains("\"model\":\"m\"", json);
+        Assert.Contains("\"deliver\":\"telegram\"", json);
+        Assert.Contains("\"enabled\":true", json);
+    }
 }

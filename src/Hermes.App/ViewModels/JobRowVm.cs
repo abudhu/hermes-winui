@@ -28,6 +28,13 @@ public sealed class JobRowVm
     public Brush StatusForeground { get; set; } = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
 
     /// <summary>
+    /// The full server-side <see cref="Job"/> this row was built from. Held
+    /// so the edit pane can prefill its form from the original values
+    /// without needing a second round-trip. Not bound directly by any view.
+    /// </summary>
+    public Job? Source { get; set; }
+
+    /// <summary>
     /// Source of truth for action-button availability. The pause/resume
     /// command flips its label off this, the delete + run-now buttons are
     /// always shown for any job.
@@ -76,6 +83,7 @@ public sealed class JobRowVm
             IsRunning = isRunning,
             StatusBackground = (Brush)Application.Current.Resources[bgKey],
             StatusForeground = (Brush)Application.Current.Resources[fgKey],
+            Source = j,
         };
     }
 }

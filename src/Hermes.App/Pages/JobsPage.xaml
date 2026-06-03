@@ -134,6 +134,11 @@
                                                 Visibility="{x:Bind app:Converters.BoolToVisible(IsPaused)}">
                                             <FontIcon Glyph="&#xE76E;" FontSize="12" />
                                         </Button>
+                                        <Button Tag="{x:Bind Id}" Click="Edit_Click"
+                                                ToolTipService.ToolTip="Edit"
+                                                Padding="8,4" MinWidth="0">
+                                            <FontIcon Glyph="&#xE70F;" FontSize="12" />
+                                        </Button>
                                         <Button Tag="{x:Bind Id}" Click="Delete_Click"
                                                 ToolTipService.ToolTip="Delete"
                                                 Padding="8,4" MinWidth="0">
@@ -206,7 +211,7 @@
                             AutomationProperties.Name="Back to jobs list">
                         <FontIcon Glyph="&#xE72B;" FontSize="14" />
                     </Button>
-                    <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="New job"
+                    <TextBlock x:Name="EditTitle" Style="{StaticResource TitleTextBlockStyle}" Text="New job"
                                VerticalAlignment="Center" />
                 </StackPanel>
             </Border>
@@ -262,13 +267,26 @@
 
                     <!-- Prompt -->
                     <StackPanel Spacing="6">
-                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Prompt" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Prompt" />
+                            <TextBlock Grid.Column="1"
+                                       x:Name="EditPromptCounter"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                       VerticalAlignment="Bottom"
+                                       Text="0 / 5000" />
+                        </Grid>
                         <TextBox x:Name="EditPromptBox"
                                  PlaceholderText="Summarize my MSX milestones in 5 bullets and send to Telegram."
                                  AcceptsReturn="True"
                                  TextWrapping="Wrap"
                                  MinHeight="220"
-                                 MaxHeight="380" />
+                                 MaxHeight="380"
+                                 TextChanged="EditPromptBox_TextChanged" />
                         <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                    TextWrapping="Wrap"
@@ -337,7 +355,7 @@
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <ProgressRing x:Name="EditCreateSpinner" Width="14" Height="14"
                                           IsActive="False" Visibility="Collapsed" />
-                            <TextBlock Text="Create" />
+                            <TextBlock x:Name="EditCreateLabel" Text="Create" />
                         </StackPanel>
                     </Button>
                 </StackPanel>

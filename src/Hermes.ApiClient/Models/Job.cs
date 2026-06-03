@@ -106,3 +106,25 @@ public sealed record CreateJobRequest(
     [property: JsonPropertyName("script")] string? Script = null,
     [property: JsonPropertyName("no_agent")] bool? NoAgent = null
 );
+
+/// <summary>
+/// Body for <c>PATCH /api/jobs/{id}</c>. The gateway treats this as a
+/// partial update — fields left null (and therefore omitted by the
+/// shared serializer) are not changed on the server. Send only what
+/// the user actually edited.
+///
+/// <para>
+/// Note this is shape-identical to <see cref="CreateJobRequest"/>
+/// minus the required-name/schedule fields. It's kept as a separate
+/// record so the type system communicates "everything is optional"
+/// vs "name + schedule are required" at the call site.
+/// </para>
+/// </summary>
+public sealed record UpdateJobRequest(
+    [property: JsonPropertyName("name")] string? Name = null,
+    [property: JsonPropertyName("schedule")] string? Schedule = null,
+    [property: JsonPropertyName("prompt")] string? Prompt = null,
+    [property: JsonPropertyName("model")] string? Model = null,
+    [property: JsonPropertyName("deliver")] string? Deliver = null,
+    [property: JsonPropertyName("enabled")] bool? Enabled = null
+);

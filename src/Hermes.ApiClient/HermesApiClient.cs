@@ -87,6 +87,22 @@ public sealed class HermesApiClient : IDisposable
     }
 
     /// <summary>
+    /// Partial update against <c>PATCH /api/jobs/{id}</c>. The server
+    /// rejected PUT with 405 on probe; PATCH is the only update verb.
+    /// Returns the (now-updated) job — including server-recomputed
+    /// fields like <c>next_run_at</c> when the schedule changes — so
+    /// callers can swap the row in place without an extra refresh.
+    /// </summary>
+    public async Task<Job?> UpdateJobAsync(string id, UpdateJobRequest req, CancellationToken ct = default)
+    {
+        using var msg = new HttpRequestMessage(HttpMethod.Patch, $"/api/jobs/{Uri.EscapeDataString(id)}")
+        {
+            Content = JsonContent.Create(req, options: JsonOpts),
+        };
+        return await SendForJobAsync(msg, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Triggers an immediate run of <paramref name="id"/>. The server
     /// enqueues the run and returns the (now updated) job; the actual
     /// agent output is delivered asynchronously to the job's
@@ -112,7 +128,7 @@ public sealed class HermesApiClient : IDisposable
         if (!resp.IsSuccessStatusCode)
         {
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            throw new HttpRequestException($"{(int)resp.StatusCode} {resp.ReasonPhrase}: {body}");
+            throw new HttpRequestException(FormatErrorBody((int)resp.StatusCode, resp.ReasonPhrase, body));
         }
     }
 
@@ -130,7 +146,7 @@ public sealed class HermesApiClient : IDisposable
             if (!resp.IsSuccessStatusCode)
             {
                 var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                throw new HttpRequestException($"{(int)resp.StatusCode} {resp.ReasonPhrase}: {body}");
+                throw new HttpRequestException(FormatErrorBody((int)resp.StatusCode, resp.ReasonPhrase, body));
             }
             var env = await resp.Content.ReadFromJsonAsync<JobEnvelope>(JsonOpts, ct).ConfigureAwait(false);
             return env?.Job;
@@ -139,6 +155,38 @@ public sealed class HermesApiClient : IDisposable
         {
             msg.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Turns a non-2xx body into a human-readable error string. Hermes
+    /// endpoints return failures as <c>{"error": "..."}</c> — when we
+    /// can pull that out, we surface just the decoded message (so a
+    /// JSON-escaped <c>\u2264</c> renders as the actual <c>≤</c>
+    /// character on the InfoBar). For anything else we fall back to
+    /// the raw body prefixed with the status so debugging is still
+    /// possible.
+    /// </summary>
+    internal static string FormatErrorBody(int statusCode, string? reasonPhrase, string body)
+    {
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                    doc.RootElement.TryGetProperty("error", out var errElem) &&
+                    errElem.ValueKind == JsonValueKind.String)
+                {
+                    var errStr = errElem.GetString();
+                    if (!string.IsNullOrWhiteSpace(errStr)) return errStr!;
+                }
+            }
+            catch (JsonException)
+            {
+                // Body wasn't JSON — fall through to the raw-body branch.
+            }
+        }
+        return $"HTTP {statusCode} {reasonPhrase}: {body}";
     }
 
     /// <summary>

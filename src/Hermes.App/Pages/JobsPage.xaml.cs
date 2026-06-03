@@ -26,6 +26,13 @@ public sealed partial class JobsPage : Page
 
     private bool _modelsLoaded;
 
+    /// <summary>
+    /// State of the inline edit pane. Null = pane is closed OR open in
+    /// create mode; non-null = open in edit mode against this job id.
+    /// EditCreate_Click branches on this to choose POST vs PATCH.
+    /// </summary>
+    private string? _editingJobId;
+
     public JobsPage()
     {
         _api = App.Services.GetRequiredService<HermesApiClient>();
@@ -70,7 +77,7 @@ public sealed partial class JobsPage : Page
 
     private async void NewJob_Click(object sender, RoutedEventArgs e)
     {
-        ShowEditView();
+        ShowEditView(editingJob: null);
         // Kick off the models load the first time the form opens; cheap
         // enough that we don't bother reloading on subsequent opens.
         if (!_modelsLoaded)
@@ -80,31 +87,102 @@ public sealed partial class JobsPage : Page
         }
     }
 
-    private void ShowEditView()
+    private async void Edit_Click(object sender, RoutedEventArgs e)
     {
-        // Reset form state on every open so the previous attempt doesn't
-        // leak through (especially the error bar, which would otherwise
-        // look like a stale failure on a fresh form).
+        if (sender is not FrameworkElement fe || fe.Tag is not string id) return;
+        // Walk the rendered rows for the live `Source` snapshot. Using the
+        // cached row vm avoids a refetch and keeps the form responsive even
+        // if the gateway is briefly slow.
+        Job? job = null;
+        foreach (var row in Jobs)
+        {
+            if (row.Id == id) { job = row.Source; break; }
+        }
+        if (job is null) return;
+
+        ShowEditView(editingJob: job);
+        if (!_modelsLoaded)
+        {
+            _modelsLoaded = true;
+            await LoadModelsAsync();
+        }
+    }
+
+    private void ShowEditView(Job? editingJob)
+    {
+        // Reset state on every open so a previous attempt doesn't leak
+        // through (especially the error bar, which would otherwise read
+        // like a stale failure on a fresh form).
         EditErrorBar.IsOpen = false;
-        EditNameBox.Text = "";
-        EditScheduleBox.Text = "";
-        EditPromptBox.Text = "";
-        EditDeliverBox.Text = "";
-        EditEnabledSwitch.IsOn = true;
-        EditModelCombo.SelectedIndex = 0;
         SetEditBusy(false);
+
+        _editingJobId = editingJob?.Id;
+        var isEdit = editingJob is not null;
+
+        // Field prefill — create mode clears everything, edit mode loads
+        // the current server values verbatim.
+        EditNameBox.Text = editingJob?.Name ?? "";
+        // Prefer the structured expression for round-trippability: the
+        // user typed e.g. `0 9 * * *` and the server stored `expr` =
+        // `0 9 * * *`. `schedule_display` is the same string for cron,
+        // but for intervals it can be pretty-printed differently.
+        EditScheduleBox.Text = editingJob?.Schedule?.Expr ?? editingJob?.ScheduleDisplay ?? "";
+        EditPromptBox.Text = editingJob?.Prompt ?? "";
+        EditDeliverBox.Text = editingJob?.Deliver ?? "";
+        EditEnabledSwitch.IsOn = editingJob?.Enabled ?? true;
+        UpdatePromptCounter();
+
+        // Model selection: match by id if the server reports one and it's
+        // already in the options list (which is the case after the lazy
+        // models load completes). If not, sit on the server-default
+        // sentinel — that's the safer fallback than picking a wrong row.
+        EditModelCombo.SelectedIndex = 0;
+        if (!string.IsNullOrEmpty(editingJob?.Model))
+        {
+            EditModelCombo.SelectedValue = editingJob!.Model;
+            if (EditModelCombo.SelectedItem is null) EditModelCombo.SelectedIndex = 0;
+        }
+
+        // Swap titles + button labels for the mode. Subtle but the only
+        // visual signal that distinguishes create-vs-edit at a glance.
+        EditTitle.Text = isEdit ? "Edit job" : "New job";
+        EditCreateLabel.Text = isEdit ? "Save" : "Create";
 
         ListView.Visibility = Visibility.Collapsed;
         EditView.Visibility = Visibility.Visible;
         // Drop the user straight into the first field so they can start
-        // typing without an extra click.
+        // typing (or editing) without an extra click.
         EditNameBox.Focus(FocusState.Programmatic);
+    }
+
+    /// <summary>
+    /// Server-side cap on the prompt body. Discovered empirically (the
+    /// gateway returns <c>{"error":"Prompt must be \u2264 5000 characters"}</c>
+    /// on a 400 when it's exceeded). Mirrored here so the user sees the
+    /// limit as they type instead of via a server round-trip.
+    /// </summary>
+    private const int PromptMaxChars = 5000;
+
+    private void EditPromptBox_TextChanged(object sender, TextChangedEventArgs e) => UpdatePromptCounter();
+
+    private void UpdatePromptCounter()
+    {
+        var len = EditPromptBox.Text?.Length ?? 0;
+        EditPromptCounter.Text = $"{len} / {PromptMaxChars}";
+        // Use the system error brush past the cap so it's obvious before
+        // the user even tries to submit. Stay tertiary while under-cap so
+        // it doesn't compete visually with the prompt body.
+        var brushKey = len > PromptMaxChars
+            ? "SystemFillColorCriticalBrush"
+            : "TextFillColorTertiaryBrush";
+        EditPromptCounter.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[brushKey];
     }
 
     private void ShowListView()
     {
         EditView.Visibility = Visibility.Collapsed;
         ListView.Visibility = Visibility.Visible;
+        _editingJobId = null;
     }
 
     private void EditCancel_Click(object sender, RoutedEventArgs e) => ShowListView();
@@ -124,6 +202,7 @@ public sealed partial class JobsPage : Page
         if (string.IsNullOrEmpty(name)) validation = "Name is required.";
         else if (string.IsNullOrEmpty(schedule)) validation = "Schedule is required.";
         else if (string.IsNullOrEmpty(prompt)) validation = "Prompt is required (this is the task the agent will run).";
+        else if (prompt.Length > PromptMaxChars) validation = $"Prompt is {prompt.Length:N0} characters — Hermes caps prompts at {PromptMaxChars:N0}. Trim it down.";
 
         if (validation is not null)
         {
@@ -133,26 +212,47 @@ public sealed partial class JobsPage : Page
 
         var selectedModel = EditModelCombo.SelectedValue as string;
         var deliver = EditDeliverBox.Text?.Trim();
-
-        var req = new CreateJobRequest(
-            Name: name,
-            Schedule: schedule,
-            Prompt: prompt,
-            Model: string.IsNullOrEmpty(selectedModel) ? null : selectedModel,
-            Deliver: string.IsNullOrEmpty(deliver) ? null : deliver,
-            // Only send `enabled` when the user explicitly turned it off.
-            // The server defaults to enabled; omitting is less ambiguous
-            // than echoing `true` back.
-            Enabled: EditEnabledSwitch.IsOn ? null : false);
+        var isEdit = _editingJobId is not null;
 
         SetEditBusy(true);
         try
         {
-            await _api.CreateJobAsync(req, CancellationToken.None);
+            if (isEdit)
+            {
+                // PATCH: send the full editable form. The server treats
+                // omitted fields as "no change", but we want a Save button
+                // to mean "make the server match the form". For Enabled we
+                // pass the explicit toggle state rather than the omit-when-
+                // true shortcut used on create.
+                var update = new UpdateJobRequest(
+                    Name: name,
+                    Schedule: schedule,
+                    Prompt: prompt,
+                    Model: string.IsNullOrEmpty(selectedModel) ? null : selectedModel,
+                    Deliver: string.IsNullOrEmpty(deliver) ? null : deliver,
+                    Enabled: EditEnabledSwitch.IsOn);
+                await _api.UpdateJobAsync(_editingJobId!, update, CancellationToken.None);
+            }
+            else
+            {
+                var req = new CreateJobRequest(
+                    Name: name,
+                    Schedule: schedule,
+                    Prompt: prompt,
+                    Model: string.IsNullOrEmpty(selectedModel) ? null : selectedModel,
+                    Deliver: string.IsNullOrEmpty(deliver) ? null : deliver,
+                    // Only send `enabled` when the user explicitly turned
+                    // it off. The server defaults to enabled; omitting is
+                    // less ambiguous than echoing `true` back.
+                    Enabled: EditEnabledSwitch.IsOn ? null : false);
+                await _api.CreateJobAsync(req, CancellationToken.None);
+            }
+
             ShowListView();
             // Reload from the server rather than splicing the local list —
-            // ensures we pick up server-computed fields like next_run_at,
-            // and avoids drift if the server normalised any input.
+            // ensures we pick up server-computed fields like next_run_at
+            // (which the server recomputes when the schedule changes), and
+            // avoids drift if the server normalised any input.
             await RefreshAsync();
         }
         catch (Exception ex)
