@@ -42,6 +42,11 @@ public static class MarkdownRenderer
         .UseAutoLinks()
         .Build();
 
+    /// <summary>Font fallback chain for inline and block code. Cached as a
+    /// single FontFamily instance so we're not constructing one per inline.</summary>
+    private static readonly FontFamily MonospaceFont =
+        new("Consolas, 'Cascadia Mono', 'Segoe UI Mono', monospace");
+
     /// <summary>Parse + emit. Returns block-level <see cref="UIElement"/>s
     /// in document order; the caller stuffs them into a StackPanel.</summary>
     public static IList<UIElement> RenderToBlocks(string markdown, bool highlight)
@@ -102,12 +107,9 @@ public static class MarkdownRenderer
 
     private static UIElement RenderFencedCode(FencedCodeBlock fc, bool highlight)
     {
-        var code = string.Join("\n", fc.Lines.Lines
-            .Take(fc.Lines.Count)
-            .Select(l => l.Slice.ToString() ?? string.Empty));
         return new Hermes.App.Controls.CodeBlockControl
         {
-            Code = code,
+            Code = JoinCodeLines(fc.Lines),
             CodeLanguage = fc.Info ?? "",
             HighlightEnabled = highlight,
         };
@@ -115,12 +117,9 @@ public static class MarkdownRenderer
 
     private static UIElement RenderIndentedCode(CodeBlock cb)
     {
-        var code = string.Join("\n", cb.Lines.Lines
-            .Take(cb.Lines.Count)
-            .Select(l => l.Slice.ToString() ?? string.Empty));
         return new Hermes.App.Controls.CodeBlockControl
         {
-            Code = code,
+            Code = JoinCodeLines(cb.Lines),
             CodeLanguage = "",
             HighlightEnabled = false,
         };
@@ -249,19 +248,26 @@ public static class MarkdownRenderer
     /// without us interpreting potentially-untrusted markup.</summary>
     private static UIElement RenderHtmlAsPlain(HtmlBlock html)
     {
-        var raw = string.Join("\n", html.Lines.Lines.Take(html.Lines.Count)
-            .Select(l => l.Slice.ToString() ?? string.Empty));
         var rtb = NewRichTextBlock();
         var p = new Paragraph();
         p.Inlines.Add(new Run
         {
-            Text = raw,
-            FontFamily = new FontFamily("Consolas, 'Cascadia Mono', 'Segoe UI Mono', monospace"),
+            Text = JoinCodeLines(html.Lines),
+            FontFamily = MonospaceFont,
             FontSize = 13,
         });
         rtb.Blocks.Add(p);
         return rtb;
     }
+
+    /// <summary>Flatten a Markdig <see cref="Markdig.Helpers.StringLineGroup"/>
+    /// (a backing array with a logical Count) into a newline-joined string.
+    /// Used by every block type that surfaces raw line content — fenced code,
+    /// indented code, raw HTML.</summary>
+    private static string JoinCodeLines(Markdig.Helpers.StringLineGroup group) =>
+        string.Join("\n", group.Lines
+            .Take(group.Count)
+            .Select(l => l.Slice.ToString() ?? string.Empty));
 
     // -----------------------------------------------------------------------
     // Inline emission
@@ -310,7 +316,7 @@ public static class MarkdownRenderer
                     var run = new Run
                     {
                         Text = code.Content,
-                        FontFamily = new FontFamily("Consolas, 'Cascadia Mono', 'Segoe UI Mono', monospace"),
+                        FontFamily = MonospaceFont,
                         FontSize = baseFontSize - 1,
                         // Inline elements don't reliably support a Background
                         // brush in WinUI 3, so we lean on monospace + a subtle
