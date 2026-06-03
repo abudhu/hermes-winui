@@ -156,9 +156,13 @@ public sealed class HermesStreamingClient : IDisposable
         {
             RawEvent = "tool.started",
             RawData = data,
-            Name = TryGetString(root, "name") ?? TryGetString(root, "tool"),
+            // Hermes has two emission paths: one uses "tool_name" (api_server
+            // tool_executor wrapper), the other uses "tool" (api_server direct
+            // gateway callback). The legacy "name" is kept as a last resort.
+            Name = TryGetString(root, "tool_name") ?? TryGetString(root, "tool") ?? TryGetString(root, "name"),
             CallId = TryGetString(root, "call_id") ?? TryGetString(root, "id"),
-            ArgumentsJson = TryGetJson(root, "arguments") ?? TryGetJson(root, "args") ?? TryGetJson(root, "input"),
+            ArgumentsJson = TryGetJson(root, "args") ?? TryGetJson(root, "arguments") ?? TryGetJson(root, "input"),
+            Preview = TryGetString(root, "preview"),
         };
     }
 
@@ -168,20 +172,31 @@ public sealed class HermesStreamingClient : IDisposable
         var root = doc.RootElement;
         var isErr = false;
         if (root.TryGetProperty("is_error", out var ie) && ie.ValueKind == JsonValueKind.True) isErr = true;
-        if (root.TryGetProperty("error", out var er) && er.ValueKind != JsonValueKind.Null) isErr = true;
+        if (root.TryGetProperty("error", out var er))
+        {
+            // Gateway "error" can be either a bool flag (api_server direct path)
+            // or an error payload object (tool_executor path). Both indicate failure.
+            if (er.ValueKind == JsonValueKind.True) isErr = true;
+            else if (er.ValueKind == JsonValueKind.Object || er.ValueKind == JsonValueKind.String) isErr = true;
+        }
 
         string? outText = TryGetString(root, "output") ?? TryGetString(root, "result");
         string? outJson = outText is null ? TryGetJson(root, "output") ?? TryGetJson(root, "result") : null;
+
+        double? duration = null;
+        if (root.TryGetProperty("duration", out var d) && d.ValueKind == JsonValueKind.Number)
+            duration = d.GetDouble();
 
         return new ToolCompletedEvent
         {
             RawEvent = "tool.completed",
             RawData = data,
-            Name = TryGetString(root, "name") ?? TryGetString(root, "tool"),
+            Name = TryGetString(root, "tool_name") ?? TryGetString(root, "tool") ?? TryGetString(root, "name"),
             CallId = TryGetString(root, "call_id") ?? TryGetString(root, "id"),
             OutputText = outText,
             OutputJson = outJson,
             IsError = isErr,
+            DurationSeconds = duration,
         };
     }
 

@@ -222,8 +222,12 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
                     msg.ToolCalls.Add(new ToolCallVm
                     {
                         CallId = ts.CallId,
-                        Name = ts.Name ?? "tool",
+                        // Fall back to "(unknown)" only if every name field was
+                        // missing — this used to be "tool" but that hid the
+                        // bug where the parser was looking at the wrong field.
+                        Name = !string.IsNullOrEmpty(ts.Name) ? ts.Name! : "(unknown)",
                         ArgumentsJson = PrettyJson(ts.ArgumentsJson),
+                        Preview = ts.Preview,
                         IsRunning = true,
                     });
                     break;
@@ -245,9 +249,19 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
                     var ccard = FindCard(msg, tc.CallId, tc.Name);
                     if (ccard is not null)
                     {
-                        ccard.Output = tc.OutputText ?? PrettyJson(tc.OutputJson);
+                        // Some gateway paths don't emit an output payload at all
+                        // (the api_server direct path only sends tool/duration/error).
+                        // Don't blank a previously-set Output in that case.
+                        var newOutput = tc.OutputText ?? PrettyJson(tc.OutputJson);
+                        if (!string.IsNullOrEmpty(newOutput)) ccard.Output = newOutput;
                         ccard.IsRunning = false;
                         ccard.IsError = tc.IsError;
+                        ccard.DurationSeconds = tc.DurationSeconds;
+                        // Late-bind the name if tool.started didn't carry one
+                        // but tool.completed did — keeps the card from being
+                        // stuck at "(unknown)" forever.
+                        if (ccard.Name == "(unknown)" && !string.IsNullOrEmpty(tc.Name))
+                            ccard.Name = tc.Name!;
                     }
                     break;
 

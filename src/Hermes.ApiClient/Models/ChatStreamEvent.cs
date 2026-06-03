@@ -26,6 +26,10 @@ public sealed record ToolStartedEvent : ChatStreamEvent
     public string? Name { get; init; }
     public string? CallId { get; init; }
     public string? ArgumentsJson { get; init; }
+    /// <summary>Short summary the gateway provides describing what this
+    /// invocation is doing (e.g. <c>"ls"</c> for terminal, <c>"*.py"</c>
+    /// for search_files). Shown as a subtitle in the tool card.</summary>
+    public string? Preview { get; init; }
 }
 
 /// <summary>Tool call returned a result.</summary>
@@ -36,6 +40,8 @@ public sealed record ToolCompletedEvent : ChatStreamEvent
     public string? OutputText { get; init; }
     public string? OutputJson { get; init; }
     public bool IsError { get; init; }
+    /// <summary>Wall-clock duration in seconds (from the gateway).</summary>
+    public double? DurationSeconds { get; init; }
 }
 
 /// <summary>Progress update from inside a running tool (optional).</summary>

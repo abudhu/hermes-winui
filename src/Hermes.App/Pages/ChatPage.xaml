@@ -64,6 +64,7 @@
                                                     <ColumnDefinition Width="Auto" />
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
                                                 <FontIcon Grid.Column="0"
                                                           Glyph="&#xE9F5;"
@@ -75,16 +76,23 @@
                                                            Style="{StaticResource BodyStrongTextBlockStyle}"
                                                            VerticalAlignment="Center" />
                                                 <TextBlock Grid.Column="2"
-                                                           Text="{x:Bind Progress, Mode=OneWay}"
+                                                           Text="{x:Bind Subtitle, Mode=OneWay}"
                                                            Style="{StaticResource CaptionTextBlockStyle}"
                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                            TextTrimming="CharacterEllipsis"
                                                            VerticalAlignment="Center" />
-                                                <ProgressRing Grid.Column="3"
+                                                <TextBlock Grid.Column="3"
+                                                           Text="{x:Bind DurationLabel, Mode=OneWay}"
+                                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                           Margin="0,0,8,0"
+                                                           VerticalAlignment="Center"
+                                                           Visibility="{x:Bind app:Converters.NotEmpty(DurationLabel), Mode=OneWay}" />
+                                                <ProgressRing Grid.Column="4"
                                                               Width="14" Height="14"
                                                               IsActive="True"
                                                               Visibility="{x:Bind app:Converters.BoolToVisible(IsRunning), Mode=OneWay}" />
-                                                <FontIcon Grid.Column="3"
+                                                <FontIcon Grid.Column="4"
                                                           Glyph="&#xE73E;"
                                                           FontSize="14"
                                                           VerticalAlignment="Center"
