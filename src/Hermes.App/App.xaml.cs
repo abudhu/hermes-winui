@@ -3,7 +3,9 @@ using Hermes.ApiClient;
 using Hermes.App.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.Windows.AppLifecycle;
 
 namespace Hermes.App;
 
@@ -77,5 +79,70 @@ public partial class App : Application
         MainWindow = new MainWindow();
         MainWindow.Activate();
     }
+
+    /// <summary>
+    /// Wired up in <see cref="Program.Main"/> for the primary instance.
+    /// Fires every time a second launch attempt is redirected to us — e.g.
+    /// the tray's "Open Hermes app" entry or the user double-clicking the
+    /// Start tile while the app is already running.
+    ///
+    /// <para>The event ALWAYS arrives on a thread-pool thread, so we have to
+    /// hop to the UI dispatcher before touching the window. <c>AppInstance.RedirectActivationToAsync</c>
+    /// transfers foreground privileges to us, so <c>SetForegroundWindow</c>
+    /// won't be blocked by the foreground-lock; we still call it explicitly
+    /// because <see cref="Window.Activate"/> alone doesn't reliably steal
+    /// focus from another foreground process in WinUI 3.</para>
+    /// </summary>
+    internal static void OnInstanceActivated(object? sender, AppActivationArguments args)
+    {
+        var window = MainWindow;
+        if (window is null) return;
+
+        window.DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                // If the window is minimized, lift it out of the taskbar.
+                // OverlappedPresenter exposes the WM_SYSCOMMAND restore that
+                // would otherwise require P/Invoke.
+                if (window.AppWindow?.Presenter is OverlappedPresenter presenter
+                    && presenter.State == OverlappedPresenterState.Minimized)
+                {
+                    presenter.Restore();
+                }
+                window.AppWindow?.Show();
+                window.Activate();
+
+                // Belt-and-braces: explicitly bring the HWND to the front.
+                // WinUI 3 Activate() is a no-op if the window is already in
+                // the activated state from the OS's perspective but visually
+                // buried behind another window — which is exactly the case
+                // we're handling here.
+                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+                if (hwnd != IntPtr.Zero)
+                {
+                    NativeMethods.SetForegroundWindow(hwnd);
+                }
+            }
+            catch
+            {
+                // Best-effort focus — if any of this throws (e.g. window is
+                // mid-close) we don't want to crash the entire process from
+                // a background-thread callback.
+            }
+        });
+    }
+}
+
+/// <summary>P/Invoke surface limited to what
+/// <see cref="App.OnInstanceActivated"/> needs.</summary>
+internal static class NativeMethods
+{
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [System.Runtime.InteropServices.DefaultDllImportSearchPaths(
+        System.Runtime.InteropServices.DllImportSearchPath.System32)]
+    [return: System.Runtime.InteropServices.MarshalAs(
+        System.Runtime.InteropServices.UnmanagedType.Bool)]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
 }
 

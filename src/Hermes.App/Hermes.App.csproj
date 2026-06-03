@@ -13,6 +13,11 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Replace XAML-generated Main with our own (src/Hermes.App/Program.cs).
+         Required so we can run AppInstance.FindOrRegisterForKey BEFORE
+         Application.Start and redirect second activations into the running
+         process (used by the tray's "Open Hermes app" entry). -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

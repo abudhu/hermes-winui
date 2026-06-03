@@ -231,6 +231,52 @@
             UserTemplate="{StaticResource UserTemplate}"
             AssistantTemplate="{StaticResource AssistantTemplate}" />
 
+        <!-- Landing-page card styles. Cards are Buttons styled to look like
+             tappable surfaces: rounded corners, subtle fill, thin border,
+             a faint hover lift. The hover/pressed visuals come from the
+             default Button template's VisualStates — Background swaps with
+             the *PointerOver / *Pressed theme resources automatically. -->
+        <Style x:Key="SuggestionCardStyle" TargetType="Button">
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="16,18,16,18" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="VerticalContentAlignment" Value="Top" />
+            <Setter Property="MinHeight" Value="118" />
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+        </Style>
+
+        <!-- Same as the basic card but stretches horizontally to feel
+             featured. Used for the wide right-hand card on row 1 of the
+             landing grid (the "Plan my day" prompt). -->
+        <Style x:Key="SuggestionFeaturedCardStyle" TargetType="Button"
+               BasedOn="{StaticResource SuggestionCardStyle}">
+            <Setter Property="Padding" Value="18,18,18,18" />
+        </Style>
+
+        <Style x:Key="SuggestionTitleStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="LineHeight" Value="20" />
+        </Style>
+
+        <Style x:Key="SuggestionFeaturedTitleStyle" TargetType="TextBlock"
+               BasedOn="{StaticResource SuggestionTitleStyle}">
+            <Setter Property="FontSize" Value="14" />
+        </Style>
+
+        <Style x:Key="SuggestionIconBubbleStyle" TargetType="Border">
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+        </Style>
+
     </Page.Resources>
 
     <Grid>
@@ -299,20 +345,143 @@
                       ViewChanged="TranscriptScroll_ViewChanged">
             <StackPanel x:Name="TranscriptContent" SizeChanged="TranscriptContent_SizeChanged">
                 <Grid x:Name="EmptyState"
-                      MinHeight="320"
+                      Padding="24,32,24,24"
+                      MinHeight="420"
                       Visibility="{x:Bind app:Converters.BoolToCollapsed(ViewModel.HasMessages), Mode=OneWay}">
-                    <StackPanel Spacing="10"
-                                HorizontalAlignment="Center"
-                                VerticalAlignment="Center">
-                        <FontIcon Glyph="&#xE8BD;" FontSize="40"
-                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                        <TextBlock Style="{StaticResource SubtitleTextBlockStyle}"
+                    <StackPanel HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Spacing="40"
+                                MaxWidth="820">
+                        <!-- Greeting: time-of-day + capitalized Windows username + tagline.
+                             GreetingText is computed once in the code-behind ctor. -->
+                        <TextBlock x:Name="GreetingText"
+                                   Style="{StaticResource TitleTextBlockStyle}"
+                                   FontWeight="SemiLight"
                                    HorizontalAlignment="Center"
-                                   Text="Start a conversation with Hermes" />
+                                   TextAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+
+                        <!-- Suggestion grid: 3 columns × 2 rows. Row 0 has three
+                             icon-only prompts; row 1 has two prompts plus a wider
+                             "featured" card spanning two columns on the right. -->
+                        <Grid ColumnSpacing="14" RowSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <!-- Row 0 -->
+                            <Button Grid.Row="0" Grid.Column="0"
+                                    Style="{StaticResource SuggestionCardStyle}"
+                                    Tag="What can you do? Give me a quick tour of your skills, tools, and how you work."
+                                    Click="Suggestion_Click"
+                                    AutomationProperties.Name="What can Hermes do?">
+                                <StackPanel Spacing="10">
+                                    <Border Style="{StaticResource SuggestionIconBubbleStyle}">
+                                        <FontIcon Glyph="&#xE946;" FontSize="22"
+                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                    </Border>
+                                    <TextBlock Text="What can Hermes do?"
+                                               Style="{StaticResource SuggestionTitleStyle}" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button Grid.Row="0" Grid.Column="1"
+                                    Style="{StaticResource SuggestionCardStyle}"
+                                    Tag="Show me my most recent memories and group them by topic."
+                                    Click="Suggestion_Click"
+                                    AutomationProperties.Name="Show recent memories">
+                                <StackPanel Spacing="10">
+                                    <Border Style="{StaticResource SuggestionIconBubbleStyle}">
+                                        <FontIcon Glyph="&#xE81C;" FontSize="22"
+                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                    </Border>
+                                    <TextBlock Text="Show recent memories"
+                                               Style="{StaticResource SuggestionTitleStyle}" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button Grid.Row="0" Grid.Column="2"
+                                    Style="{StaticResource SuggestionCardStyle}"
+                                    Tag="List my available skills and explain what each one does."
+                                    Click="Suggestion_Click"
+                                    AutomationProperties.Name="List my skills">
+                                <StackPanel Spacing="10">
+                                    <Border Style="{StaticResource SuggestionIconBubbleStyle}">
+                                        <FontIcon Glyph="&#xEA86;" FontSize="22"
+                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                    </Border>
+                                    <TextBlock Text="List my skills"
+                                               Style="{StaticResource SuggestionTitleStyle}" />
+                                </StackPanel>
+                            </Button>
+
+                            <!-- Row 1 -->
+                            <Button Grid.Row="1" Grid.Column="0"
+                                    Style="{StaticResource SuggestionCardStyle}"
+                                    Tag="Help me write a short Python script that "
+                                    Click="Suggestion_Click"
+                                    AutomationProperties.Name="Write a Python script">
+                                <StackPanel Spacing="10">
+                                    <Border Style="{StaticResource SuggestionIconBubbleStyle}">
+                                        <FontIcon Glyph="&#xE943;" FontSize="22"
+                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                    </Border>
+                                    <TextBlock Text="Write a Python script"
+                                               Style="{StaticResource SuggestionTitleStyle}" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button Grid.Row="1" Grid.Column="1"
+                                    Style="{StaticResource SuggestionCardStyle}"
+                                    Tag="Summarize what's in the current directory and highlight anything that looks interesting."
+                                    Click="Suggestion_Click"
+                                    AutomationProperties.Name="Summarize this folder">
+                                <StackPanel Spacing="10">
+                                    <Border Style="{StaticResource SuggestionIconBubbleStyle}">
+                                        <FontIcon Glyph="&#xE7C3;" FontSize="22"
+                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                    </Border>
+                                    <TextBlock Text="Summarize this folder"
+                                               Style="{StaticResource SuggestionTitleStyle}" />
+                                </StackPanel>
+                            </Button>
+
+                            <!-- Featured wide card -->
+                            <Button Grid.Row="1" Grid.Column="2"
+                                    Style="{StaticResource SuggestionFeaturedCardStyle}"
+                                    Tag="Pull my open tasks and any time-sensitive memories, then draft a plan for the rest of my day."
+                                    Click="Suggestion_Click"
+                                    AutomationProperties.Name="Plan my day from tasks and memories">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource SuggestionIconBubbleStyle}"
+                                            VerticalAlignment="Top">
+                                        <FontIcon Glyph="&#xE787;" FontSize="22"
+                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                    </Border>
+                                    <TextBlock Grid.Column="1"
+                                               VerticalAlignment="Top"
+                                               TextWrapping="Wrap"
+                                               Style="{StaticResource SuggestionFeaturedTitleStyle}"
+                                               Text="Plan my day from my open tasks and memories" />
+                                </Grid>
+                            </Button>
+                        </Grid>
+
                         <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                    HorizontalAlignment="Center"
-                                   Text="Streams replies live, with tool calls rendered inline." />
+                                   TextAlignment="Center"
+                                   Text="Tap a card or type a prompt below. Enter sends, Shift+Enter inserts a newline." />
                     </StackPanel>
                 </Grid>
 

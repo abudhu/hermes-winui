@@ -40,14 +40,9 @@
             PaneDisplayMode="Left"
             SelectionChanged="NavView_SelectionChanged">
             <NavigationView.MenuItems>
-                <NavigationViewItem Content="Home"
+                <NavigationViewItem Content="Chat"
                                     IsSelected="True"
-                                    Tag="home">
-                    <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE80F;" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Content="Chat" Tag="chat">
+                                    Tag="chat">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE8BD;" />
                     </NavigationViewItem.Icon>

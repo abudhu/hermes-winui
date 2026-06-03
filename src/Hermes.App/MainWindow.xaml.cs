@@ -63,7 +63,6 @@ public sealed partial class MainWindow : Window
 
         var target = tag switch
         {
-            "home"     => typeof(HomePage),
             "chat"     => typeof(ChatPage),
             "sessions" => typeof(SessionsPage),
             "memories" => typeof(MemoriesPage),

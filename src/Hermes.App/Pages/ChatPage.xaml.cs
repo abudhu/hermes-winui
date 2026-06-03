@@ -44,6 +44,12 @@ public sealed partial class ChatPage : Page
 
     public ChatViewModel ViewModel { get; }
 
+    /// <summary>Greeting shown on the landing surface when there are no
+    /// messages yet. Computed once in the ctor from the local time-of-day
+    /// and the Windows username (title-cased). Bound to GreetingText.Text
+    /// via direct assignment because the landing area isn't a DataTemplate.</summary>
+    public string Greeting { get; }
+
     public ChatPage()
     {
         // Resolve from the singleton container so the VM's state (active
@@ -51,14 +57,74 @@ public sealed partial class ChatPage : Page
         // navigation away and back. This is what makes SessionsPage's
         // "Resume conversation" handoff actually land here visibly.
         ViewModel = App.Services.GetRequiredService<ChatViewModel>();
+        Greeting = BuildGreeting();
 
         InitializeComponent();
+        GreetingText.Text = Greeting;
 
         // First-render hookup. We also attach on OnNavigatedTo, but on the
         // very first construction OnNavigatedTo and the ctor both fire — the
         // _attached guard keeps us from double-subscribing in that case.
         AttachViewModelEvents();
         UpdateSessionLine();
+    }
+
+    /// <summary>"Good morning, Amit · let's get something done" — time-of-day
+    /// prefix + capitalized Windows username + tagline. Falls back to a
+    /// generic phrase if the OS username is empty or unparseable.</summary>
+    private static string BuildGreeting()
+    {
+        var hour = DateTime.Now.Hour;
+        var timeOfDay = hour switch
+        {
+            < 5 => "Working late",
+            < 12 => "Good morning",
+            < 17 => "Good afternoon",
+            < 21 => "Good evening",
+            _ => "Working late",
+        };
+
+        var name = SafeUserName();
+        return string.IsNullOrEmpty(name)
+            ? $"{timeOfDay} — let's get something done"
+            : $"{timeOfDay}, {name} — let's get something done";
+    }
+
+    private static string SafeUserName()
+    {
+        try
+        {
+            var raw = Environment.UserName ?? string.Empty;
+            if (raw.Length == 0) return string.Empty;
+            // Title-case: capitalize first letter, lower-case the rest. We
+            // deliberately don't try to split CamelCase or "first.last" forms
+            // — those land cleanly enough as-is for a greeting.
+            return char.ToUpperInvariant(raw[0]) + raw[1..].ToLowerInvariant();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Suggestion-card click: copies the card's Tag prompt into the composer
+    /// and focuses the composer for editing. We don't auto-send because most
+    /// of the prompts are conversation starters the user typically wants to
+    /// finish typing (e.g. "Help me write a Python script that …").
+    /// </summary>
+    private void Suggestion_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+        if (fe.Tag is not string prompt || prompt.Length == 0) return;
+
+        ViewModel.Composer = prompt;
+        // Focus the composer at the end of the inserted text so the user can
+        // keep typing immediately. FocusState.Programmatic shows a keyboard
+        // caret without the focus-ring chrome that Keyboard would draw.
+        Composer.Focus(FocusState.Programmatic);
+        Composer.SelectionStart = Composer.Text.Length;
+        Composer.SelectionLength = 0;
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
