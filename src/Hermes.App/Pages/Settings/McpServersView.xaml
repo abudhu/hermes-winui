@@ -242,11 +242,23 @@
                                 Orientation="Horizontal"
                                 Spacing="12"
                                 VerticalAlignment="Center">
+                        <!--
+                          IMPORTANT: Do NOT set IsOn= in XAML on this toggle.
+                          The combination of OnContent/OffContent text and a
+                          literal IsOn=True attribute crashes Windows App SDK
+                          2.1.3's XAML parser at McpServersView instantiation
+                          time with "Failed to assign to property
+                          ToggleSwitch.IsOn"; the failure surfaces as a
+                          stowed exception inside SettingsPage.InitializeComponent
+                          and looks like a render-time crash. Initial IsOn is set
+                          from code-behind in SyncEditorToggleFromBody() the
+                          moment a server is selected (or a new-server form is
+                          shown), so leaving it unset here has no visible effect.
+                        -->
                         <ToggleSwitch x:Name="EditorEnabledToggle"
                                       MinWidth="0"
                                       OnContent="On"
                                       OffContent="Off"
-                                      IsOn="True"
                                       Toggled="EditorEnabled_Toggled" />
                         <TextBlock x:Name="EditorEnabledHint"
                                    VerticalAlignment="Center"
