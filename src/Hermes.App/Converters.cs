@@ -44,6 +44,36 @@ public static class Converters
 
     public static string OrDash(string? value) => string.IsNullOrEmpty(value) ? "—" : value!;
 
+    /// <summary>
+    /// ISO 8601 timestamp (the Hermes job API uses these for created_at /
+    /// next_run_at / last_run_at) → "now", "in 2h", "5m ago", etc.
+    /// Returns "—" on null/unparseable.
+    /// </summary>
+    public static string IsoToRelative(string? iso)
+    {
+        if (string.IsNullOrWhiteSpace(iso)) return "—";
+        if (!DateTimeOffset.TryParse(iso, out var when)) return "—";
+        var delta = when - DateTimeOffset.UtcNow;
+        var abs = delta.Duration();
+        var suffix = delta.TotalSeconds < 0 ? " ago" : "";
+        var prefix = delta.TotalSeconds < 0 ? "" : "in ";
+        if (abs.TotalSeconds < 60) return delta.TotalSeconds < 0 ? "just now" : "now";
+        var label = abs.TotalMinutes < 60 ? $"{(int)abs.TotalMinutes}m"
+                  : abs.TotalHours < 24 ? $"{(int)abs.TotalHours}h"
+                  : abs.TotalDays < 7 ? $"{(int)abs.TotalDays}d"
+                  : abs.TotalDays < 30 ? $"{(int)(abs.TotalDays / 7)}w"
+                  : $"{(int)(abs.TotalDays / 30)}mo";
+        return prefix + label + suffix;
+    }
+
+    /// <summary>ISO 8601 → "yyyy-MM-dd HH:mm" local. Used in tooltips.</summary>
+    public static string IsoToLocalTime(string? iso)
+    {
+        if (string.IsNullOrWhiteSpace(iso)) return "—";
+        if (!DateTimeOffset.TryParse(iso, out var when)) return iso!;
+        return when.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+    }
+
     public static string OrZero(int? value) => (value ?? 0).ToString();
     public static string OrZero(long? value) => (value ?? 0L).ToString("N0");
 

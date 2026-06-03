@@ -77,6 +77,70 @@ public sealed class HermesApiClient : IDisposable
     public Task<JobList?> GetJobsAsync(CancellationToken ct = default) =>
         GetJsonAsync<JobList>("/api/jobs", ct);
 
+    public async Task<Job?> CreateJobAsync(CreateJobRequest req, CancellationToken ct = default)
+    {
+        using var msg = new HttpRequestMessage(HttpMethod.Post, "/api/jobs")
+        {
+            Content = JsonContent.Create(req, options: JsonOpts),
+        };
+        return await SendForJobAsync(msg, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Triggers an immediate run of <paramref name="id"/>. The server
+    /// enqueues the run and returns the (now updated) job; the actual
+    /// agent output is delivered asynchronously to the job's
+    /// <c>deliver</c> channel, not in this response.
+    /// </summary>
+    public Task<Job?> RunJobAsync(string id, CancellationToken ct = default) =>
+        PostForJobAsync($"/api/jobs/{Uri.EscapeDataString(id)}/run", ct);
+
+    public Task<Job?> PauseJobAsync(string id, CancellationToken ct = default) =>
+        PostForJobAsync($"/api/jobs/{Uri.EscapeDataString(id)}/pause", ct);
+
+    public Task<Job?> ResumeJobAsync(string id, CancellationToken ct = default) =>
+        PostForJobAsync($"/api/jobs/{Uri.EscapeDataString(id)}/resume", ct);
+
+    /// <summary>
+    /// Deletes the job. Server returns <c>{"ok": true}</c>; we just check
+    /// for a 2xx and surface anything else as an exception so callers don't
+    /// have to disambiguate.
+    /// </summary>
+    public async Task DeleteJobAsync(string id, CancellationToken ct = default)
+    {
+        using var resp = await _http.DeleteAsync($"/api/jobs/{Uri.EscapeDataString(id)}", ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+        {
+            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            throw new HttpRequestException($"{(int)resp.StatusCode} {resp.ReasonPhrase}: {body}");
+        }
+    }
+
+    private Task<Job?> PostForJobAsync(string path, CancellationToken ct)
+    {
+        var msg = new HttpRequestMessage(HttpMethod.Post, path);
+        return SendForJobAsync(msg, ct);
+    }
+
+    private async Task<Job?> SendForJobAsync(HttpRequestMessage msg, CancellationToken ct)
+    {
+        try
+        {
+            using var resp = await _http.SendAsync(msg, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                throw new HttpRequestException($"{(int)resp.StatusCode} {resp.ReasonPhrase}: {body}");
+            }
+            var env = await resp.Content.ReadFromJsonAsync<JobEnvelope>(JsonOpts, ct).ConfigureAwait(false);
+            return env?.Job;
+        }
+        finally
+        {
+            msg.Dispose();
+        }
+    }
+
     /// <summary>
     /// Creates a fresh session that chat turns can be attached to. Hermes
     /// auto-fills source / model from server config when both are omitted;

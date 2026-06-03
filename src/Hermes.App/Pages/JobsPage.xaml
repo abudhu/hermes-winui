@@ -8,8 +8,14 @@
     xmlns:app="using:Hermes.App"
     xmlns:vm="using:Hermes.App.ViewModels"
     mc:Ignorable="d">
-
     <Grid>
+        <!--
+        Two stacked top-level views: ListView (default) and EditView (the
+        "new job" form). NewJob_Click flips visibility instead of opening
+        a modal — gives the form real estate like the reference pattern
+        the user wants to match.
+        -->
+        <Grid x:Name="ListView">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -23,6 +29,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Spacing="2">
                     <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="Jobs" />
@@ -31,7 +38,14 @@
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                Text="—" />
                 </StackPanel>
-                <Button Grid.Column="1" Click="Refresh_Click" VerticalAlignment="Center">
+                <Button Grid.Column="1" Click="NewJob_Click" VerticalAlignment="Center"
+                        Style="{StaticResource AccentButtonStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE710;" FontSize="14" />
+                        <TextBlock Text="New job" />
+                    </StackPanel>
+                </Button>
+                <Button Grid.Column="2" Click="Refresh_Click" VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon Glyph="&#xE72C;" FontSize="14" />
                         <TextBlock Text="Refresh" />
@@ -40,8 +54,21 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="1" Padding="24">
-            <ScrollViewer x:Name="ListScroll" VerticalScrollBarVisibility="Auto"
+        <Grid Grid.Row="1" Padding="24" RowSpacing="12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <InfoBar Grid.Row="0"
+                     x:Name="ErrorBar"
+                     Severity="Error"
+                     IsClosable="True"
+                     IsOpen="False"
+                     Message="" />
+
+            <ScrollViewer Grid.Row="1"
+                          x:Name="ListScroll" VerticalScrollBarVisibility="Auto"
                           Visibility="Collapsed">
                 <ItemsRepeater ItemsSource="{x:Bind Jobs, Mode=OneWay}">
                     <ItemsRepeater.Layout>
@@ -54,37 +81,77 @@
                                     BorderThickness="1"
                                     CornerRadius="8"
                                     Padding="16,14">
-                                <Grid ColumnSpacing="16">
+                                <Grid ColumnSpacing="16" RowSpacing="6">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" Spacing="4">
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <FontIcon Glyph="&#xE823;" FontSize="14"
-                                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                                            <TextBlock Text="{x:Bind Id}"
-                                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                            <Border Background="{x:Bind StatusBackground}"
-                                                    CornerRadius="4" Padding="6,1">
-                                                <TextBlock Text="{x:Bind StatusLabel}"
-                                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                                           Foreground="{x:Bind StatusForeground}" />
-                                            </Border>
-                                        </StackPanel>
-                                        <TextBlock Text="{x:Bind PromptPreview}"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                   TextWrapping="Wrap" />
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon Glyph="&#xE823;" FontSize="14"
+                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                        <TextBlock Text="{x:Bind DisplayName}"
+                                                   Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                        <Border Background="{x:Bind StatusBackground}"
+                                                CornerRadius="4" Padding="6,1">
+                                            <TextBlock Text="{x:Bind StatusLabel}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{x:Bind StatusForeground}" />
+                                        </Border>
                                     </StackPanel>
-                                    <StackPanel Grid.Column="1" Spacing="2" HorizontalAlignment="Right">
+
+                                    <StackPanel Grid.Row="0" Grid.Column="1" Spacing="2" HorizontalAlignment="Right" VerticalAlignment="Center">
                                         <TextBlock Text="{x:Bind ScheduleLabel}"
                                                    FontFamily="Consolas"
                                                    Style="{StaticResource CaptionTextBlockStyle}" />
                                         <TextBlock Text="{x:Bind NextRunLabel}"
+                                                   ToolTipService.ToolTip="{x:Bind NextRunTooltip}"
                                                    Style="{StaticResource CaptionTextBlockStyle}"
                                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                                     </StackPanel>
+
+                                    <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                        <Button Tag="{x:Bind Id}" Click="RunNow_Click"
+                                                ToolTipService.ToolTip="Run now"
+                                                Padding="8,4" MinWidth="0">
+                                            <FontIcon Glyph="&#xE768;" FontSize="12" />
+                                        </Button>
+                                        <Button Tag="{x:Bind Id}" Click="Pause_Click"
+                                                ToolTipService.ToolTip="Pause"
+                                                Padding="8,4" MinWidth="0"
+                                                Visibility="{x:Bind app:Converters.BoolToCollapsed(IsPaused)}">
+                                            <FontIcon Glyph="&#xE769;" FontSize="12" />
+                                        </Button>
+                                        <Button Tag="{x:Bind Id}" Click="Resume_Click"
+                                                ToolTipService.ToolTip="Resume"
+                                                Padding="8,4" MinWidth="0"
+                                                Visibility="{x:Bind app:Converters.BoolToVisible(IsPaused)}">
+                                            <FontIcon Glyph="&#xE76E;" FontSize="12" />
+                                        </Button>
+                                        <Button Tag="{x:Bind Id}" Click="Delete_Click"
+                                                ToolTipService.ToolTip="Delete"
+                                                Padding="8,4" MinWidth="0">
+                                            <FontIcon Glyph="&#xE74D;" FontSize="12" />
+                                        </Button>
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3"
+                                               Text="{x:Bind PromptPreview}"
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap" />
+
+                                    <InfoBar Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3"
+                                             Severity="Error"
+                                             IsClosable="False"
+                                             IsOpen="{x:Bind HasLastError}"
+                                             Message="{x:Bind LastErrorLabel}" />
                                 </Grid>
                             </Border>
                         </DataTemplate>
@@ -92,7 +159,8 @@
                 </ItemsRepeater>
             </ScrollViewer>
 
-            <StackPanel x:Name="EmptyState" Spacing="12"
+            <StackPanel Grid.Row="1"
+                        x:Name="EmptyState" Spacing="12"
                         HorizontalAlignment="Center" VerticalAlignment="Center">
                 <FontIcon Glyph="&#xE823;" FontSize="40"
                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
@@ -106,8 +174,174 @@
                            MaxWidth="420"
                            TextAlignment="Center"
                            TextWrapping="Wrap"
-                           Text="Use `hermes cron` on the command line to schedule background agent runs. They'll appear here once created." />
+                           Text="Click + New job to schedule a background agent run. You can also use the `hermes cron` CLI; jobs from either path show up here." />
             </StackPanel>
+        </Grid>
+        </Grid>
+
+        <!--
+        ============================================================
+        EditView — inline "new job" form. Visible only while creating.
+        Layout mirrors the reference Automations editor: back arrow +
+        title at the top, scrollable form with sectioned fields, and
+        a bottom action bar that stays pinned regardless of scroll.
+        ============================================================
+        -->
+        <Grid x:Name="EditView" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0"
+                    BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                    BorderThickness="0,0,0,1"
+                    Padding="24,16">
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button x:Name="EditBackButton" Click="EditCancel_Click"
+                            Style="{StaticResource SubtleButtonStyle}"
+                            Padding="8" MinWidth="0" MinHeight="0"
+                            ToolTipService.ToolTip="Back to jobs list"
+                            AutomationProperties.Name="Back to jobs list">
+                        <FontIcon Glyph="&#xE72B;" FontSize="14" />
+                    </Button>
+                    <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="New job"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled"
+                          HorizontalContentAlignment="Stretch">
+                <StackPanel HorizontalAlignment="Stretch"
+                            Padding="32,20,32,24"
+                            Spacing="22">
+
+                    <InfoBar x:Name="EditErrorBar"
+                             Severity="Error"
+                             IsClosable="False"
+                             IsOpen="False"
+                             Message="" />
+
+                    <!-- Name -->
+                    <StackPanel Spacing="6">
+                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Name" />
+                        <TextBox x:Name="EditNameBox"
+                                 MinHeight="36"
+                                 PlaceholderText="Morning MSX brief" />
+                    </StackPanel>
+
+                    <!-- Schedule (with help icon) -->
+                    <StackPanel Spacing="6">
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Schedule" />
+                            <FontIcon Glyph="&#xE946;" FontSize="12"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                      VerticalAlignment="Center">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip>
+                                        <StackPanel Spacing="6" MaxWidth="320">
+                                            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Schedule formats" />
+                                            <TextBlock TextWrapping="Wrap" Text="Cron expression — e.g. `0 9 * * 1-5` (9am weekdays)" />
+                                            <TextBlock TextWrapping="Wrap" Text="Interval — e.g. `30m`, `2h`, `every 15m`" />
+                                            <TextBlock TextWrapping="Wrap" Text="One-shot ISO timestamp — e.g. `2026-12-01T09:00`" />
+                                        </StackPanel>
+                                    </ToolTip>
+                                </ToolTipService.ToolTip>
+                            </FontIcon>
+                        </StackPanel>
+                        <TextBox x:Name="EditScheduleBox"
+                                 FontFamily="Consolas"
+                                 MinHeight="36"
+                                 PlaceholderText="0 9 * * 1-5" />
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   TextWrapping="Wrap"
+                                   Text="Cron, interval, or one-shot ISO timestamp. Hover the ? icon for examples." />
+                    </StackPanel>
+
+                    <!-- Prompt -->
+                    <StackPanel Spacing="6">
+                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Prompt" />
+                        <TextBox x:Name="EditPromptBox"
+                                 PlaceholderText="Summarize my MSX milestones in 5 bullets and send to Telegram."
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 MinHeight="220"
+                                 MaxHeight="380" />
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   TextWrapping="Wrap"
+                                   Text="The task the agent runs on every fire. Be specific — bad prompts are worse than no jobs." />
+                    </StackPanel>
+
+                    <!-- Advanced (collapsed by default to keep the page calm) -->
+                    <Expander HorizontalAlignment="Stretch"
+                              HorizontalContentAlignment="Stretch"
+                              Header="Advanced">
+                        <StackPanel Spacing="22" Padding="0,8,0,8">
+
+                            <!-- Model -->
+                            <StackPanel Spacing="6">
+                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Model" />
+                                <ComboBox x:Name="EditModelCombo"
+                                          HorizontalAlignment="Stretch"
+                                          MinHeight="36"
+                                          ItemsSource="{x:Bind ModelOptions, Mode=OneWay}"
+                                          SelectedValuePath="Id">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:ModelOptionVm">
+                                            <TextBlock Text="{x:Bind DisplayName}" TextTrimming="CharacterEllipsis" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                                <TextBlock x:Name="EditModelHint"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                           Text="Loading models…"
+                                           Visibility="Collapsed" />
+                            </StackPanel>
+
+                            <!-- Deliver -->
+                            <StackPanel Spacing="6">
+                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Deliver to" />
+                                <TextBox x:Name="EditDeliverBox"
+                                         MinHeight="36"
+                                         PlaceholderText="local" />
+                                <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                           TextWrapping="Wrap"
+                                           Text="`local` saves output to disk. Leave blank for the server default. Other values (telegram, discord, etc.) require gateway support." />
+                            </StackPanel>
+
+                            <!-- Enabled toggle -->
+                            <ToggleSwitch x:Name="EditEnabledSwitch"
+                                          Header="Enabled"
+                                          IsOn="True"
+                                          OnContent="On — runs on schedule"
+                                          OffContent="Off — won't fire until enabled" />
+                        </StackPanel>
+                    </Expander>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Sticky bottom action bar -->
+            <Border Grid.Row="2"
+                    BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                    BorderThickness="0,1,0,0"
+                    Padding="24,12">
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <Button Click="EditCancel_Click" Content="Cancel" />
+                    <Button x:Name="EditCreateButton" Click="EditCreate_Click"
+                            Style="{StaticResource AccentButtonStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <ProgressRing x:Name="EditCreateSpinner" Width="14" Height="14"
+                                          IsActive="False" Visibility="Collapsed" />
+                            <TextBlock Text="Create" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Border>
         </Grid>
     </Grid>
 </Page>

@@ -25,22 +25,22 @@ public sealed class ModelOptionVm
 {
     /// <summary>The model id sent to the gateway. <see langword="null"/>
     /// only for the special "Model not reported" synthetic.</summary>
-    public string? Id { get; init; }
+    public string? Id { get; set; }
 
     /// <summary>What the user sees in the ComboBox / read-only chip.
     /// For real entries this is the same as <see cref="Id"/>; for
     /// synthetics it's a human-friendly label.</summary>
-    public string DisplayName { get; init; } = "";
+    public string DisplayName { get; set; } = "";
 
     /// <summary>False for synthetic / placeholder entries. The picker
     /// could use this to grey out unavailable options if we ever want to
     /// surface "this model is no longer available" visually.</summary>
-    public bool IsAvailable { get; init; } = true;
+    public bool IsAvailable { get; set; } = true;
 
     /// <summary>True for entries the picker invented (not from
     /// <c>/v1/models</c>). Useful so <see cref="ViewModels.ChatViewModel"/>
     /// can scrub these on NewChat without scrubbing real entries.</summary>
-    public bool IsSynthetic { get; init; }
+    public bool IsSynthetic { get; set; }
 
     public static ModelOptionVm FromModel(ModelInfo info) => new()
     {
@@ -68,6 +68,19 @@ public sealed class ModelOptionVm
         Id = null,
         DisplayName = "Model not reported",
         IsAvailable = false,
+        IsSynthetic = true,
+    };
+
+    /// <summary>Synthetic for "let the server pick the default model" —
+    /// rendered as the first option in the job-create dialog's model
+    /// dropdown. Distinct from <see cref="Unreported"/> because the
+    /// label means something different ("I'm choosing the default"
+    /// vs. "I don't know what was chosen").</summary>
+    public static ModelOptionVm ServerDefault() => new()
+    {
+        Id = null,
+        DisplayName = "(server default)",
+        IsAvailable = true,
         IsSynthetic = true,
     };
 }
