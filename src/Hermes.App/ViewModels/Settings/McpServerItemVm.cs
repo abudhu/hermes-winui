@@ -28,14 +28,20 @@ public sealed partial class McpServerItemVm : ObservableObject
     /// <see cref="Body"/>.</summary>
     public string Transport => GetTransport(Body);
 
-    /// <summary>true if <c>enabled: false</c> is set on this server.
-    /// We do NOT honour <c>disabled: true</c> for the disabled pill —
-    /// that's a typo'd key Hermes does not recognise, surfaced as a
-    /// warning by the editor instead.</summary>
+    /// <summary>True when <c>enabled: false</c> is set on this server.
+    /// Hermes's startup filter (<c>tools/mcp_tool.py</c>) reads
+    /// <c>enabled</c> with a default of <c>true</c>, so absence of the
+    /// key means enabled. We never write the default — toggling on
+    /// removes the field, toggling off writes <c>enabled: false</c>.</summary>
     public bool IsDisabled =>
         Body.ValueKind == JsonValueKind.Object
         && Body.TryGetProperty("enabled", out var en)
         && en.ValueKind == JsonValueKind.False;
+
+    /// <summary>True when the server is enabled (the negation of
+    /// <see cref="IsDisabled"/>, exposed separately for two-way binding
+    /// onto the row's <c>ToggleSwitch.IsOn</c>).</summary>
+    public bool IsEnabled => !IsDisabled;
 
     public void Update(string name, JsonElement body)
     {
@@ -43,6 +49,7 @@ public sealed partial class McpServerItemVm : ObservableObject
         Body = body;
         OnPropertyChanged(nameof(Transport));
         OnPropertyChanged(nameof(IsDisabled));
+        OnPropertyChanged(nameof(IsEnabled));
     }
 
     public static string GetTransport(JsonElement body)

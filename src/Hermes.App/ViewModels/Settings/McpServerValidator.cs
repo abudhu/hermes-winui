@@ -27,10 +27,12 @@ internal static class McpServerValidator
 
     /// <summary>Likely-misspelled keys → suggested correct key. We warn
     /// (not block) so power users with future-Hermes features aren't
-    /// stuck.</summary>
+    /// stuck. Note: the obsolete "disabled is a typo for enabled" hint
+    /// was removed when the Enabled toggle shipped — the UI now writes
+    /// <c>enabled</c> directly so users no longer hand-type either key.</summary>
     private static readonly Dictionary<string, string> TypoHints = new(StringComparer.Ordinal)
     {
-        ["disabled"] = "Hermes uses 'enabled: false' instead of 'disabled: true'.",
+        ["disabled"] = "Hermes ignores 'disabled' — it filters on 'enabled' (use the Enabled toggle instead of editing this by hand).",
         ["header"] = "Did you mean 'headers'?",
         ["environ"] = "Did you mean 'env'?",
         ["arg"] = "Did you mean 'args'?",
@@ -166,6 +168,17 @@ internal static class McpServerValidator
         ValidateStringMap(parsedBody, "headers", errors);
         ValidatePositiveInt(parsedBody, "timeout", errors);
         ValidatePositiveInt(parsedBody, "connect_timeout", errors);
+
+        // 'enabled' is shipped exclusively as a boolean via the Enabled
+        // toggle. Hermes's _parse_boolish accepts strings ("true"/"false")
+        // and other shapes, but anything other than a JSON true/false from
+        // our UI is a sign of a hand-edit that should be cleaned up.
+        if (parsedBody.TryGetProperty("enabled", out var enabled)
+            && enabled.ValueKind != JsonValueKind.True
+            && enabled.ValueKind != JsonValueKind.False)
+        {
+            errors.Add("'enabled' must be a boolean (true or false). Remove it or use the Enabled toggle.");
+        }
 
         // ---- Typo warnings (non-blocking) ------------------------------
         foreach (var prop in parsedBody.EnumerateObject())
