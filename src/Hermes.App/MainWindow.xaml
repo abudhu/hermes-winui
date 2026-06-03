@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:local="using:Hermes.App"
+    xmlns:controls="using:Hermes.App.Controls"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     Title="Hermes"
     mc:Ignorable="d">
@@ -12,7 +13,28 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid>
+    <Grid x:Name="RootGrid">
+        <Grid.KeyboardAccelerators>
+            <!--
+                App-wide accelerators. Each Invoked handler routes through
+                MainWindow.xaml.cs, which gates on focus + modal state so
+                these don't steal keys from text boxes / dropdowns.
+                Ctrl+, is wired from code-behind because VirtualKey doesn't
+                expose Oem-Comma as a named value.
+            -->
+            <KeyboardAccelerator Key="K" Modifiers="Control" Invoked="CtrlK_Invoked" />
+            <KeyboardAccelerator Key="N" Modifiers="Control" Invoked="CtrlN_Invoked" />
+            <KeyboardAccelerator Key="W" Modifiers="Control" Invoked="CtrlW_Invoked" />
+            <KeyboardAccelerator Key="Escape" Invoked="Escape_Invoked" />
+            <!--
+                Ctrl+E — TODO: bind to ChatViewModel.CopyAsMarkdownCommand
+                once the parallel export sub-session lands it. Until then
+                the accelerator is wired so it stops bubbling to anything
+                else (Edge has Ctrl+E for search), and no-ops cleanly.
+            -->
+            <KeyboardAccelerator Key="E" Modifiers="Control" Invoked="CtrlE_Invoked" />
+        </Grid.KeyboardAccelerators>
+
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
             <RowDefinition Height="*" />
@@ -42,7 +64,8 @@
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="Chat"
                                     IsSelected="True"
-                                    Tag="chat">
+                                    Tag="chat"
+                                    ToolTipService.ToolTip="Chat (Ctrl+N for new)">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE8BD;" />
                     </NavigationViewItem.Icon>
@@ -76,5 +99,21 @@
             </NavigationView.MenuItems>
             <Frame x:Name="NavFrame" />
         </NavigationView>
+
+        <!--
+            Command palette popup. Lives in the root Grid so its XamlRoot is
+            valid (a Popup needs to be part of a XamlRoot's visual tree).
+            Sits at Grid.Row=0 with no size so it doesn't take any layout
+            slot when closed; the popup itself handles its own positioning
+            via HorizontalOffset/VerticalOffset.
+        -->
+        <controls:CommandPalette x:Name="Palette"
+                                 Grid.Row="0"
+                                 Grid.RowSpan="2"
+                                 Width="0"
+                                 Height="0"
+                                 HorizontalAlignment="Left"
+                                 VerticalAlignment="Top" />
     </Grid>
 </Window>
+

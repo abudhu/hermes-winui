@@ -52,6 +52,27 @@ public sealed partial class ChatPage : Page
         // _attached guard keeps us from double-subscribing in that case.
         AttachViewModelEvents();
         UpdateSessionLine();
+
+        // Ctrl+/ → focus composer. The VirtualKey enum doesn't expose
+        // Oem2 (the slash key, VK 0xBF=191) so we can't wire this from
+        // XAML; the accelerator is built here at runtime instead. Same
+        // wiring covers the numpad Divide key. Page-scoped — only fires
+        // while ChatPage is the loaded content.
+        var slashAccel = new KeyboardAccelerator
+        {
+            Key = (VirtualKey)0xBF,  // VK_OEM_2 — the `/?` key on US layouts
+            Modifiers = VirtualKeyModifiers.Control,
+        };
+        slashAccel.Invoked += FocusComposer_Invoked;
+        KeyboardAccelerators.Add(slashAccel);
+
+        var divideAccel = new KeyboardAccelerator
+        {
+            Key = VirtualKey.Divide,
+            Modifiers = VirtualKeyModifiers.Control,
+        };
+        divideAccel.Invoked += FocusComposer_Invoked;
+        KeyboardAccelerators.Add(divideAccel);
     }
 
     /// <summary>
@@ -226,6 +247,29 @@ public sealed partial class ChatPage : Page
             ComposerPill.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)brush;
         }
         ComposerPill.BorderThickness = new Thickness(1);
+    }
+
+    /// <summary>
+    /// Ctrl+/ accelerator handler. Focuses the composer text box and puts
+    /// the caret at the end so the user can start typing without an extra
+    /// keystroke. Page-scoped — only fires while ChatPage is loaded, so
+    /// Ctrl+/ on other pages naturally no-ops.
+    /// </summary>
+    private void FocusComposer_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        FocusComposer();
+        args.Handled = true;
+    }
+
+    /// <summary>Public hook so MainWindow can forward focus requests
+    /// (e.g. from a palette command) without needing to know which
+    /// element on the page is the composer.</summary>
+    public void FocusComposer()
+    {
+        if (Composer is null) return;
+        Composer.Focus(FocusState.Programmatic);
+        Composer.SelectionStart = Composer.Text?.Length ?? 0;
+        Composer.SelectionLength = 0;
     }
 
     /// <summary>
