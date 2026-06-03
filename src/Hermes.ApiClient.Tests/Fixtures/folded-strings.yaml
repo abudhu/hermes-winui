@@ -1,0 +1,15 @@
+model:
+  default: claude-opus-4.7
+agent:
+  personalities:
+    folded: >-
+      This is a folded scalar that
+      spans multiple lines and should
+      collapse to spaces on parse but
+      remain in its original byte form
+      in the file we read.
+    literal: |
+      This is a literal block.
+      Newlines are preserved.
+      Trailing whitespace stays put.
+    quoted: "regular double-quoted entry that should not be reformatted"

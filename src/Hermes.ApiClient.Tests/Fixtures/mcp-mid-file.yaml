@@ -1,0 +1,12 @@
+model:
+  default: claude-opus-4.7
+mcp_servers:
+  time:
+    command: uvx
+    args:
+    - mcp-server-time
+agent:
+  max_turns: 150
+  reasoning_effort: xhigh
+toolsets:
+- hermes-cli

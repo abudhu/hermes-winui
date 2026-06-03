@@ -1,0 +1,14 @@
+# Top-of-file Hermes config (auto-generated, edited by hand).
+# Lines that start with # MUST survive a round-trip through HermesYamlConfig
+# even though we are only mutating mcp_servers.
+model:
+  default: claude-opus-4.7  # inline comment on a leaf value
+  provider: copilot
+
+agent:
+  # Important: keep this high or long jobs time out
+  max_turns: 150
+  reasoning_effort: xhigh
+
+# Trailing comment block at the bottom of the file.
+# Important things live here too.

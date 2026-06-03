@@ -1,0 +1,11 @@
+model:
+  default: claude-opus-4.7
+mcp_servers:
+  one:
+    command: npx
+    args: [-y, "@test/one"]
+  two:
+    command: npx
+    args:
+    - -y
+    - "@test/two"

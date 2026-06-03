@@ -23,6 +23,12 @@ public sealed class HermesConfig
     /// path.</summary>
     public string EnvFilePath => Path.Combine(ConfigDirectory, ".env");
 
+    /// <summary>Full path to <c>config.yaml</c> inside
+    /// <see cref="ConfigDirectory"/>. Exposed so the Settings page can
+    /// edit the <c>mcp_servers</c> block (via
+    /// <c>HermesYamlConfig.Save</c>) without re-deriving the path.</summary>
+    public string ConfigYamlPath => Path.Combine(ConfigDirectory, "config.yaml");
+
     private HermesConfig(string dir, IReadOnlyDictionary<string, string> env)
     {
         ConfigDirectory = dir;

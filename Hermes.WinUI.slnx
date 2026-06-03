@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Hermes.ApiClient/Hermes.ApiClient.csproj" />
+    <Project Path="src/Hermes.ApiClient.Tests/Hermes.ApiClient.Tests.csproj" />
     <Project Path="src/Hermes.App/Hermes.App.csproj">
       <Platform Project="x86" />
     </Project>

@@ -1,0 +1,6 @@
+model:
+  default: claude-opus-4.7-1m-internal
+  provider: copilot
+agent:
+  max_turns: 150
+  reasoning_effort: xhigh
