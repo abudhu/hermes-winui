@@ -56,6 +56,19 @@ public sealed partial class MessageVm : ObservableObject
     /// <summary>True if the model emitted any reasoning trace this turn.</summary>
     public bool HasReasoning => !string.IsNullOrEmpty(Reasoning);
 
+    /// <summary>True if this message has any inline tool cards. Drives the
+    /// tool-card ItemsRepeater's Visibility so an empty container doesn't
+    /// leak StackPanel spacing above the Content text and push the bubble's
+    /// contents off-center.</summary>
+    public bool HasToolCalls => ToolCalls.Count > 0;
+
     partial void OnStateChanged(MessageState value) => OnPropertyChanged(nameof(IsStreaming));
     partial void OnReasoningChanged(string value) => OnPropertyChanged(nameof(HasReasoning));
+
+    public MessageVm()
+    {
+        // ObservableCollection raises CollectionChanged whenever items are
+        // added/removed; we use that to re-raise HasToolCalls for the binding.
+        ToolCalls.CollectionChanged += (_, __) => OnPropertyChanged(nameof(HasToolCalls));
+    }
 }
