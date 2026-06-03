@@ -1,0 +1,20 @@
+model:
+  default: claude-opus-4.7
+platform_toolsets:
+  cli:
+  - hermes-cli
+  - file
+  - web
+  api_server:
+  - hermes-api-server
+  - stale-mcp
+  telegram:
+  - hermes-telegram
+mcp_servers:
+  workiq:
+    command: npx
+    args:
+    - -y
+    - '@microsoft/workiq@latest'
+    - mcp
+    timeout: 180

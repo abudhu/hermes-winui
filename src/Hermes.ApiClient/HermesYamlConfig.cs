@@ -64,6 +64,16 @@ public sealed record YamlSaveResult(YamlSaveStatus Status, string? Detail = null
 public static class HermesYamlConfig
 {
     private const string McpServersKey = "mcp_servers";
+    private const string PlatformToolsetsKey = "platform_toolsets";
+    private const string ApiServerToolsetKey = "api_server";
+
+    /// <summary>
+    /// The default first entry in <c>platform_toolsets.api_server</c>.
+    /// Without this, an api_server platform left to defaults would lose
+    /// all its non-MCP tools (web, file, terminal, ...) the moment we
+    /// write an explicit api_server entry.
+    /// </summary>
+    public const string DefaultApiServerToolset = "hermes-api-server";
 
     /// <summary>
     /// Name of the permanent one-time backup created the first time we
@@ -107,20 +117,29 @@ public static class HermesYamlConfig
 
     /// <summary>
     /// Writes <paramref name="newServers"/> as the file's
-    /// <c>mcp_servers</c> block. Returns <see cref="YamlSaveStatus.Unchanged"/>
-    /// when the candidate text matches the current file byte-for-byte;
-    /// no write is performed in that case. Returns
-    /// <see cref="YamlSaveStatus.ConflictExternalEdit"/> if the file on
-    /// disk has changed since <paramref name="token"/> was captured.
-    /// Throws nothing for the conflict case — callers inspect the
-    /// returned status.
+    /// <c>mcp_servers</c> block. When <paramref name="apiServerToolsets"/>
+    /// is non-null, also splices the <c>platform_toolsets.api_server</c>
+    /// entry to that exact list — needed because the Hermes API server
+    /// platform does NOT auto-include MCP servers (it passes
+    /// <c>include_default_mcp_servers=False</c>), so the WinUI app's chat
+    /// won't see them unless they are explicitly named here. The rest of
+    /// <c>platform_toolsets</c> (cli, telegram, …) is preserved.
+    ///
+    /// Returns <see cref="YamlSaveStatus.Unchanged"/> when both the
+    /// MCP block and the api_server toolset entry already match the
+    /// requested values byte-equivalent; no write is performed in that
+    /// case. Returns <see cref="YamlSaveStatus.ConflictExternalEdit"/>
+    /// if the file on disk has changed since <paramref name="token"/>
+    /// was captured. Throws nothing for the conflict case — callers
+    /// inspect the returned status.
     /// </summary>
     /// <exception cref="InvalidDataException">The current file on disk is
     /// not parseable as YAML.</exception>
     public static YamlSaveResult Save(
         string path,
         ConcurrencyToken token,
-        IReadOnlyList<McpServerEntry> newServers)
+        IReadOnlyList<McpServerEntry> newServers,
+        IReadOnlyList<string>? apiServerToolsets = null)
     {
         // 1. Concurrency check. Re-read the file from disk and compare
         //    BOTH stamp and SHA-256 against the token. A bare timestamp
@@ -178,13 +197,44 @@ public static class HermesYamlConfig
         string candidate;
         try
         {
-            candidate = SpliceMcpServers(currentText, mcpYaml);
+            candidate = SpliceTopLevelBlock(currentText, McpServersKey, mcpYaml);
         }
         catch (Exception ex)
         {
             return new YamlSaveResult(
                 YamlSaveStatus.ValidationFailed,
                 $"Could not locate the mcp_servers range in the current file: {ex.Message}");
+        }
+
+        // 3b. Optionally splice platform_toolsets.api_server. We do this
+        //     against the post-MCP-splice candidate so both edits land in
+        //     one atomic write with one backup.
+        if (apiServerToolsets is not null)
+        {
+            string platYaml;
+            try
+            {
+                var platformToolsets = ExtractPlatformToolsets(candidate);
+                platformToolsets[ApiServerToolsetKey] = apiServerToolsets.ToList();
+                platYaml = EmitPlatformToolsetsYaml(platformToolsets);
+            }
+            catch (Exception ex)
+            {
+                return new YamlSaveResult(
+                    YamlSaveStatus.ValidationFailed,
+                    $"Could not build platform_toolsets YAML: {ex.Message}");
+            }
+
+            try
+            {
+                candidate = SpliceTopLevelBlock(candidate, PlatformToolsetsKey, platYaml);
+            }
+            catch (Exception ex)
+            {
+                return new YamlSaveResult(
+                    YamlSaveStatus.ValidationFailed,
+                    $"Could not splice platform_toolsets into the file: {ex.Message}");
+            }
         }
 
         // 4. No-op short-circuit: semantic compare. Re-emission may
@@ -194,7 +244,14 @@ public static class HermesYamlConfig
         //    "user opened Settings and clicked Save with no edits"
         //    should never disturb the file.
         var currentServers = ExtractMcpServers(currentText);
-        if (StructurallyEquivalent(currentServers, newServers))
+        var mcpUnchanged = StructurallyEquivalent(currentServers, newServers);
+        var platformUnchanged = apiServerToolsets is null
+            || ApiServerToolsetsEqual(
+                ExtractPlatformToolsets(currentText).TryGetValue(ApiServerToolsetKey, out var existing)
+                    ? existing
+                    : [],
+                apiServerToolsets);
+        if (mcpUnchanged && platformUnchanged)
         {
             return new YamlSaveResult(YamlSaveStatus.Unchanged);
         }
@@ -202,7 +259,7 @@ public static class HermesYamlConfig
         // 5. Post-write validation: parse the candidate, extract
         //    mcp_servers, semantically compare to the intended input.
         //    This catches writer bugs BEFORE anything lands on disk.
-        if (!ValidateCandidate(candidate, newServers, out var validationError))
+        if (!ValidateCandidate(candidate, newServers, apiServerToolsets, out var validationError))
         {
             return new YamlSaveResult(YamlSaveStatus.ValidationFailed, validationError);
         }
@@ -315,17 +372,17 @@ public static class HermesYamlConfig
     }
 
     /// <summary>
-    /// Splices <paramref name="mcpBlock"/> (a fully-formed
-    /// <c>mcp_servers:</c> YAML block ending in LF) into
-    /// <paramref name="original"/>, replacing the existing block if
+    /// Splices <paramref name="block"/> (a fully-formed top-level YAML
+    /// block ending in LF whose first line is "<paramref name="keyName"/>:")
+    /// into <paramref name="original"/>, replacing the existing block if
     /// present or appending if not.
     /// </summary>
-    private static string SpliceMcpServers(string original, string mcpBlock)
+    private static string SpliceTopLevelBlock(string original, string keyName, string block)
     {
         // Detect dominant newline style so we can re-apply it.
         var newline = DetectNewline(original) ?? Environment.NewLine;
-        // mcpBlock is internally LF-normalised; re-apply file's newline.
-        var blockForFile = newline == "\n" ? mcpBlock : mcpBlock.Replace("\n", newline);
+        // block is internally LF-normalised; re-apply file's newline.
+        var blockForFile = newline == "\n" ? block : block.Replace("\n", newline);
 
         if (string.IsNullOrEmpty(original))
         {
@@ -333,8 +390,8 @@ public static class HermesYamlConfig
             return blockForFile;
         }
 
-        // Locate the byte range of the existing mcp_servers: block.
-        var (start, end, exists) = LocateMcpServersRange(original);
+        // Locate the byte range of the existing block.
+        var (start, end, exists) = LocateTopLevelKeyRange(original, keyName);
 
         if (!exists)
         {
@@ -376,19 +433,19 @@ public static class HermesYamlConfig
     }
 
     /// <summary>
-    /// Finds the byte range of the existing <c>mcp_servers:</c> top-level
-    /// key in <paramref name="text"/>. Range starts at column-1 of the
-    /// line containing the key and ends at column-1 of the line
-    /// containing the NEXT top-level key (or at EOF if no next key).
-    /// Returns <c>exists=false</c> with <c>start=end=text.Length</c> if
-    /// the key is not present.
+    /// Finds the byte range of the named top-level key in
+    /// <paramref name="text"/>. Range starts at column-1 of the line
+    /// containing the key and ends at column-1 of the line containing
+    /// the NEXT top-level key (or at EOF if no next key). Returns
+    /// <c>exists=false</c> with <c>start=end=text.Length</c> if the key
+    /// is not present.
     /// </summary>
     /// <remarks>
     /// We deliberately use the NEXT key's Start (not the current node's
     /// End) because YamlDotNet's End-mark on block-style nodes is known
     /// to be unreliable.
     /// </remarks>
-    private static (int Start, int End, bool Exists) LocateMcpServersRange(string text)
+    private static (int Start, int End, bool Exists) LocateTopLevelKeyRange(string text, string keyName)
     {
         YamlStream stream;
         try
@@ -419,7 +476,7 @@ public static class HermesYamlConfig
         }
         topKeys.Sort((a, b) => a.KeyIndex.CompareTo(b.KeyIndex));
 
-        var idx = topKeys.FindIndex(t => t.Key == McpServersKey);
+        var idx = topKeys.FindIndex(t => t.Key == keyName);
         if (idx < 0) return (text.Length, text.Length, false);
 
         var keyIndex = topKeys[idx].KeyIndex;
@@ -436,6 +493,104 @@ public static class HermesYamlConfig
         }
 
         return (lineStart, rangeEnd, true);
+    }
+
+    /// <summary>
+    /// Reads the entire <c>platform_toolsets:</c> mapping into a
+    /// preserve-order dictionary of <c>platform name → toolset list</c>.
+    /// Skips entries whose value is not a YAML sequence of scalars
+    /// (defensive — Hermes only writes sequence-of-scalars there).
+    /// Returns an empty dictionary if the key is absent or null.
+    /// </summary>
+    private static Dictionary<string, List<string>> ExtractPlatformToolsets(string text)
+    {
+        var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(text)) return result;
+
+        YamlStream stream;
+        try
+        {
+            stream = new YamlStream();
+            using var reader = new StringReader(text);
+            stream.Load(reader);
+        }
+        catch (YamlException ex)
+        {
+            throw new InvalidDataException(
+                $"config.yaml is not valid YAML: {ex.Message}", ex);
+        }
+
+        if (stream.Documents.Count == 0) return result;
+        if (stream.Documents[0].RootNode is not YamlMappingNode root) return result;
+
+        foreach (var kv in root.Children)
+        {
+            if (kv.Key is YamlScalarNode keyScalar && keyScalar.Value == PlatformToolsetsKey)
+            {
+                if (kv.Value is YamlMappingNode mapping)
+                {
+                    foreach (var inner in mapping.Children)
+                    {
+                        if (inner.Key is not YamlScalarNode nameNode || nameNode.Value is null)
+                            continue;
+                        if (inner.Value is not YamlSequenceNode seq)
+                            continue;
+                        var list = new List<string>(seq.Children.Count);
+                        foreach (var item in seq.Children)
+                        {
+                            if (item is YamlScalarNode s && s.Value is not null)
+                                list.Add(s.Value);
+                        }
+                        result[nameNode.Value] = list;
+                    }
+                }
+                return result;
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Builds the full <c>platform_toolsets:</c> block as a YAML string
+    /// ending in a single LF. Always starts at column 0 with the literal
+    /// <c>platform_toolsets:</c> key followed by 2-space-indented
+    /// children.
+    /// </summary>
+    private static string EmitPlatformToolsetsYaml(Dictionary<string, List<string>> mapping)
+    {
+        var inner = new YamlMappingNode();
+        foreach (var kv in mapping)
+        {
+            var seq = new YamlSequenceNode();
+            foreach (var entry in kv.Value)
+            {
+                seq.Add(new YamlScalarNode(entry));
+            }
+            inner.Add(new YamlScalarNode(kv.Key), seq);
+        }
+        var wrapper = new YamlMappingNode();
+        wrapper.Add(new YamlScalarNode(PlatformToolsetsKey), inner);
+
+        var doc = new YamlDocument(wrapper);
+        var stream = new YamlStream(doc);
+
+        var sw = new StringWriter { NewLine = "\n" };
+        stream.Save(sw, assignAnchors: false);
+        var yaml = sw.ToString();
+
+        if (yaml.StartsWith("---\n", StringComparison.Ordinal))
+            yaml = yaml[4..];
+        else if (yaml.StartsWith("---\r\n", StringComparison.Ordinal))
+            yaml = yaml[5..];
+
+        if (yaml.EndsWith("...\n", StringComparison.Ordinal))
+            yaml = yaml[..^4];
+        else if (yaml.EndsWith("...\r\n", StringComparison.Ordinal))
+            yaml = yaml[..^5];
+
+        yaml = yaml.Replace("\r\n", "\n");
+        yaml = yaml.TrimEnd('\n') + "\n";
+        return yaml;
     }
 
     private static int LineStartFor(string text, int index)
@@ -463,12 +618,16 @@ public static class HermesYamlConfig
     /// <summary>
     /// Parses <paramref name="candidate"/>, locates the <c>mcp_servers</c>
     /// subtree, and asserts it semantically matches
-    /// <paramref name="intended"/>. Catches writer bugs (dropped fields,
-    /// type changes, reordering) before anything lands on disk.
+    /// <paramref name="intended"/>. Also validates the
+    /// <c>platform_toolsets.api_server</c> list when
+    /// <paramref name="intendedApiServer"/> is non-null. Catches writer
+    /// bugs (dropped fields, type changes, reordering) before anything
+    /// lands on disk.
     /// </summary>
     private static bool ValidateCandidate(
         string candidate,
         IReadOnlyList<McpServerEntry> intended,
+        IReadOnlyList<string>? intendedApiServer,
         out string? error)
     {
         IReadOnlyList<McpServerEntry> parsed;
@@ -509,7 +668,42 @@ public static class HermesYamlConfig
             }
         }
 
+        if (intendedApiServer is not null)
+        {
+            Dictionary<string, List<string>> parsedPlat;
+            try
+            {
+                parsedPlat = ExtractPlatformToolsets(candidate);
+            }
+            catch (Exception ex)
+            {
+                error = $"Re-parse of platform_toolsets in candidate failed: {ex.Message}";
+                return false;
+            }
+            if (!parsedPlat.TryGetValue(ApiServerToolsetKey, out var parsedApi))
+            {
+                error = "Round-trip lost platform_toolsets.api_server entry.";
+                return false;
+            }
+            if (!ApiServerToolsetsEqual(parsedApi, intendedApiServer))
+            {
+                error = "Round-trip mutated platform_toolsets.api_server. " +
+                        "This is a bug — the file was not written.";
+                return false;
+            }
+        }
+
         error = null;
+        return true;
+    }
+
+    private static bool ApiServerToolsetsEqual(IReadOnlyList<string> a, IReadOnlyList<string> b)
+    {
+        if (a.Count != b.Count) return false;
+        for (int i = 0; i < a.Count; i++)
+        {
+            if (!string.Equals(a[i], b[i], StringComparison.Ordinal)) return false;
+        }
         return true;
     }
 

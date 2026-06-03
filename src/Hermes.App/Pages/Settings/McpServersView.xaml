@@ -140,14 +140,14 @@
                          IsClosable="True"
                          Severity="Informational" />
 
-                <!-- "Restart sessions" hint after a save -->
+                <!-- "Restart gateway" hint after a save -->
                 <InfoBar x:Name="ReloadHintBar"
                          Grid.Row="2"
                          IsOpen="False"
                          IsClosable="True"
-                         Severity="Informational"
-                         Title="New servers apply on next chat"
-                         Message="New MCP servers will be picked up the next time you start a chat session. Active sessions may need to be restarted to see the change." />
+                         Severity="Warning"
+                         Title="Restart the Hermes gateway to apply"
+                         Message="The Hermes gateway only discovers MCP servers at startup. Stop and restart hermes.exe (and its gateway process) for the WinUI chat to see your edits. New chat sessions started after restart will pick up the new tools." />
 
                 <!-- Name -->
                 <Grid Grid.Row="3" ColumnSpacing="12">

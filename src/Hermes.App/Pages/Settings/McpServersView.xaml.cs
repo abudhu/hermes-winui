@@ -252,7 +252,11 @@ public sealed partial class McpServersView : UserControl
             newList.Add(new McpServerEntry(nameTrimmed, parsedBody));
         }
 
-        var result = HermesYamlConfig.Save(_hermesConfig.ConfigYamlPath, _token, newList);
+        var result = HermesYamlConfig.Save(
+            _hermesConfig.ConfigYamlPath,
+            _token,
+            newList,
+            BuildApiServerToolsets(newList));
         HandleSaveResult(result, $"'{nameTrimmed}' saved.");
 
         if (result.Status == YamlSaveStatus.Saved || result.Status == YamlSaveStatus.Unchanged)
@@ -280,7 +284,11 @@ public sealed partial class McpServersView : UserControl
             .Select(s => new McpServerEntry(s.Name, s.Body))
             .ToList();
 
-        var result = HermesYamlConfig.Save(_hermesConfig.ConfigYamlPath, _token, newList);
+        var result = HermesYamlConfig.Save(
+            _hermesConfig.ConfigYamlPath,
+            _token,
+            newList,
+            BuildApiServerToolsets(newList));
         HandleSaveResult(result, $"'{removedName}' removed.");
 
         if (result.Status == YamlSaveStatus.Saved || result.Status == YamlSaveStatus.Unchanged)
@@ -288,6 +296,30 @@ public sealed partial class McpServersView : UserControl
             _selected = null;
             LoadFromDisk();
         }
+    }
+
+    /// <summary>
+    /// Builds the desired <c>platform_toolsets.api_server</c> list:
+    /// <see cref="HermesYamlConfig.DefaultApiServerToolset"/> first
+    /// (so non-MCP api_server tools — web, file, terminal — stay
+    /// available), then each MCP server name. Without this, the WinUI
+    /// chat won't see any MCP tools because the api_server platform
+    /// passes <c>include_default_mcp_servers=False</c>.
+    /// </summary>
+    private static List<string> BuildApiServerToolsets(IReadOnlyList<McpServerEntry> servers)
+    {
+        var list = new List<string>(servers.Count + 1)
+        {
+            HermesYamlConfig.DefaultApiServerToolset,
+        };
+        foreach (var s in servers)
+        {
+            // Defensive: skip empty/whitespace names. Validation upstream
+            // should already prevent this, but cheap to enforce here too.
+            if (!string.IsNullOrWhiteSpace(s.Name))
+                list.Add(s.Name);
+        }
+        return list;
     }
 
     private void HandleSaveResult(YamlSaveResult result, string successTitle)

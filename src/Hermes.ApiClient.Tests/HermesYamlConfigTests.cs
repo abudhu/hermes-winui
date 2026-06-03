@@ -385,4 +385,139 @@ public class HermesYamlConfigTests : IDisposable
         Assert.Contains("max_turns: 150", written, StringComparison.Ordinal);
         Assert.Contains("reasoning_effort: xhigh", written, StringComparison.Ordinal);
     }
+
+    // ---- platform_toolsets.api_server splice ------------------------------
+    //
+    // These tests cover the auto-sync behaviour that fixes the WinUI
+    // chat's "MCP tools never appear" problem. The Hermes API server
+    // platform passes `include_default_mcp_servers=False` to the
+    // toolset loader, so MCP servers must be explicitly named under
+    // `platform_toolsets.api_server` for the gateway to expose them
+    // over HTTP. We splice that block alongside `mcp_servers` whenever
+    // the caller passes the optional toolset list.
+
+    [Fact]
+    public void PlatformToolsets_ApiServer_Created_When_Missing_Entirely()
+    {
+        // Fixture has NO platform_toolsets key at all.
+        var path = Stage("no-platform-toolsets.yaml");
+        var (servers, token) = HermesYamlConfig.Load(path);
+        Assert.Single(servers);
+
+        var apiServerToolsets = new List<string>
+        {
+            HermesYamlConfig.DefaultApiServerToolset,
+            "workiq",
+        };
+
+        var result = HermesYamlConfig.Save(path, token, servers, apiServerToolsets);
+        Assert.Equal(YamlSaveStatus.Saved, result.Status);
+
+        var written = File.ReadAllText(path);
+        Assert.Contains("platform_toolsets:", written, StringComparison.Ordinal);
+        Assert.Contains("api_server:", written, StringComparison.Ordinal);
+        Assert.Contains("- hermes-api-server", written, StringComparison.Ordinal);
+        Assert.Contains("- workiq", written, StringComparison.Ordinal);
+
+        // mcp_servers block untouched: the same one server still loads.
+        var (reloaded, _) = HermesYamlConfig.Load(path);
+        Assert.Single(reloaded);
+    }
+
+    [Fact]
+    public void PlatformToolsets_ApiServer_Added_To_Existing_Block()
+    {
+        // Fixture has platform_toolsets with cli + telegram, no api_server.
+        var path = Stage("platform-toolsets-without-api-server.yaml");
+        var (servers, token) = HermesYamlConfig.Load(path);
+
+        var apiServerToolsets = new List<string>
+        {
+            HermesYamlConfig.DefaultApiServerToolset,
+            "workiq",
+        };
+        var result = HermesYamlConfig.Save(path, token, servers, apiServerToolsets);
+        Assert.Equal(YamlSaveStatus.Saved, result.Status);
+
+        var written = File.ReadAllText(path);
+        // New entry is present.
+        Assert.Contains("api_server:", written, StringComparison.Ordinal);
+        Assert.Contains("- hermes-api-server", written, StringComparison.Ordinal);
+        Assert.Contains("- workiq", written, StringComparison.Ordinal);
+        // Pre-existing sibling entries (cli, telegram) survive.
+        Assert.Contains("cli:", written, StringComparison.Ordinal);
+        Assert.Contains("- hermes-cli", written, StringComparison.Ordinal);
+        Assert.Contains("telegram:", written, StringComparison.Ordinal);
+        Assert.Contains("- hermes-telegram", written, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PlatformToolsets_ApiServer_Replaced_When_Already_Present()
+    {
+        // Fixture has platform_toolsets.api_server containing a stale
+        // entry that no longer exists in mcp_servers. The save MUST
+        // replace it wholesale, not append.
+        var path = Stage("platform-toolsets-with-api-server.yaml");
+        var (servers, token) = HermesYamlConfig.Load(path);
+
+        var apiServerToolsets = new List<string>
+        {
+            HermesYamlConfig.DefaultApiServerToolset,
+            "workiq",
+        };
+        var result = HermesYamlConfig.Save(path, token, servers, apiServerToolsets);
+        Assert.Equal(YamlSaveStatus.Saved, result.Status);
+
+        var written = File.ReadAllText(path);
+        Assert.Contains("- hermes-api-server", written, StringComparison.Ordinal);
+        Assert.Contains("- workiq", written, StringComparison.Ordinal);
+        // Stale entry from the fixture is GONE.
+        Assert.DoesNotContain("stale-mcp", written, StringComparison.Ordinal);
+        // Siblings still there.
+        Assert.Contains("cli:", written, StringComparison.Ordinal);
+        Assert.Contains("telegram:", written, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PlatformToolsets_ApiServer_NoOp_When_Already_Matches()
+    {
+        // Both mcp_servers AND api_server already match the requested
+        // state. Save MUST be a true no-op (no write, stamp unchanged).
+        var path = Stage("platform-toolsets-with-api-server.yaml");
+        var (servers, token) = HermesYamlConfig.Load(path);
+
+        // Match the fixture's existing api_server list exactly.
+        var apiServerToolsets = new List<string>
+        {
+            HermesYamlConfig.DefaultApiServerToolset,
+            "stale-mcp",
+        };
+
+        var originalBytes = File.ReadAllBytes(path);
+        var originalStamp = File.GetLastWriteTimeUtc(path);
+        Thread.Sleep(50);
+
+        var result = HermesYamlConfig.Save(path, token, servers, apiServerToolsets);
+        Assert.Equal(YamlSaveStatus.Unchanged, result.Status);
+
+        Assert.Equal(originalBytes, File.ReadAllBytes(path));
+        Assert.Equal(originalStamp, File.GetLastWriteTimeUtc(path));
+    }
+
+    [Fact]
+    public void PlatformToolsets_ApiServer_Save_Writes_Only_If_ApiServer_Changed()
+    {
+        // mcp_servers matches (no change there), but api_server does
+        // NOT match the request — we expect a Saved status, not Unchanged.
+        var path = Stage("platform-toolsets-with-api-server.yaml");
+        var (servers, token) = HermesYamlConfig.Load(path);
+
+        var apiServerToolsets = new List<string>
+        {
+            HermesYamlConfig.DefaultApiServerToolset,
+            "workiq",
+        };
+        var result = HermesYamlConfig.Save(path, token, servers, apiServerToolsets);
+        Assert.Equal(YamlSaveStatus.Saved, result.Status);
+    }
 }
