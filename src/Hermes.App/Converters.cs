@@ -1,5 +1,6 @@
 using System;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 
 namespace Hermes.App;
 
@@ -82,4 +83,16 @@ public static class Converters
 
     public static string FormatUsd(double? value) =>
         value is null ? "—" : $"${value.Value:F4}";
+
+    /// <summary>
+    /// Picks the row card's outer-border brush based on selection. Accent
+    /// when selected, default card stroke otherwise. Pulled into a function
+    /// so the JobsPage data template can express selection visuals with a
+    /// single x:Bind without a heavyweight per-row Style.
+    /// </summary>
+    public static Brush SelectionBorder(bool isSelected)
+    {
+        var key = isSelected ? "AccentFillColorDefaultBrush" : "CardStrokeColorDefaultBrush";
+        return (Brush)Application.Current.Resources[key];
+    }
 }

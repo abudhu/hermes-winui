@@ -67,102 +67,287 @@
                      IsOpen="False"
                      Message="" />
 
-            <ScrollViewer Grid.Row="1"
-                          x:Name="ListScroll" VerticalScrollBarVisibility="Auto"
-                          Visibility="Collapsed">
-                <ItemsRepeater ItemsSource="{x:Bind Jobs, Mode=OneWay}">
-                    <ItemsRepeater.Layout>
-                        <StackLayout Spacing="10" />
-                    </ItemsRepeater.Layout>
-                    <ItemsRepeater.ItemTemplate>
-                        <DataTemplate x:DataType="vm:JobRowVm">
-                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="8"
-                                    Padding="16,14">
-                                <Grid ColumnSpacing="16" RowSpacing="6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
+            <!--
+              Master-detail body. Layout mirrors Settings\McpServersView for
+              cross-page consistency: fixed-width list on the left, *-width
+              detail on the right. The empty-state card sits behind both
+              columns and absorbs the area when there are no jobs at all.
+            -->
+            <Grid Grid.Row="1" x:Name="MasterDetail" ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="360" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
 
-                                    <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                        <FontIcon Glyph="&#xE823;" FontSize="14"
-                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                                        <TextBlock Text="{x:Bind DisplayName}"
-                                                   Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                        <Border Background="{x:Bind StatusBackground}"
-                                                CornerRadius="4" Padding="6,1">
-                                            <TextBlock Text="{x:Bind StatusLabel}"
+                <!-- LEFT: scrollable list of selectable job cards -->
+                <ScrollViewer Grid.Column="0"
+                              x:Name="ListScroll" VerticalScrollBarVisibility="Auto"
+                              Visibility="Collapsed">
+                    <ItemsRepeater ItemsSource="{x:Bind Jobs, Mode=OneWay}">
+                        <ItemsRepeater.Layout>
+                            <StackLayout Spacing="8" />
+                        </ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate x:DataType="vm:JobRowVm">
+                                <!--
+                                  The whole card is a Button so click +
+                                  keyboard activation come for free. Default
+                                  Button chrome is suppressed via the
+                                  CardButtonStyle resource so it still
+                                  reads as a card. Selected state shows
+                                  with an accent-coloured outer border that
+                                  re-binds via the IsSelected OneWay binding.
+                                -->
+                                <Button HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        Padding="0"
+                                        Tag="{x:Bind Id}"
+                                        Click="Row_Click"
+                                        Background="Transparent"
+                                        BorderThickness="0">
+                                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                            BorderBrush="{x:Bind app:Converters.SelectionBorder(IsSelected), Mode=OneWay}"
+                                            BorderThickness="1"
+                                            CornerRadius="8"
+                                            Padding="12,10">
+                                        <Grid RowSpacing="4">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <StackPanel Grid.Row="0"
+                                                        Orientation="Horizontal"
+                                                        Spacing="6"
+                                                        VerticalAlignment="Center">
+                                                <FontIcon Glyph="&#xE823;" FontSize="13"
+                                                          Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                <TextBlock Text="{x:Bind DisplayName}"
+                                                           Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Row="1"
+                                                        Orientation="Horizontal"
+                                                        Spacing="6"
+                                                        VerticalAlignment="Center">
+                                                <Border Background="{x:Bind StatusBackground}"
+                                                        CornerRadius="4" Padding="6,1">
+                                                    <TextBlock Text="{x:Bind StatusLabel}"
+                                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                                               Foreground="{x:Bind StatusForeground}" />
+                                                </Border>
+                                                <TextBlock Text="{x:Bind ScheduleLabel}"
+                                                           FontFamily="Consolas"
+                                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Row="2"
+                                                       Text="{x:Bind NextRunLabel}"
+                                                       ToolTipService.ToolTip="{x:Bind NextRunTooltip}"
                                                        Style="{StaticResource CaptionTextBlockStyle}"
-                                                       Foreground="{x:Bind StatusForeground}" />
-                                        </Border>
-                                    </StackPanel>
+                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                        </Grid>
+                                    </Border>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                </ScrollViewer>
 
-                                    <StackPanel Grid.Row="0" Grid.Column="1" Spacing="2" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                        <TextBlock Text="{x:Bind ScheduleLabel}"
-                                                   FontFamily="Consolas"
+                <!-- RIGHT: detail pane (replaces per-row action buttons) -->
+                <Border Grid.Column="1"
+                        x:Name="DetailPane"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Visibility="Collapsed"
+                        Padding="20,16">
+                    <Grid RowSpacing="14">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Header: name + status + last-update caption -->
+                        <Grid Grid.Row="0" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock x:Name="DetailNameText"
+                                           Style="{StaticResource SubtitleTextBlockStyle}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <Border x:Name="DetailStatusBadge"
+                                            CornerRadius="4" Padding="6,1">
+                                        <TextBlock x:Name="DetailStatusText"
                                                    Style="{StaticResource CaptionTextBlockStyle}" />
-                                        <TextBlock Text="{x:Bind NextRunLabel}"
-                                                   ToolTipService.ToolTip="{x:Bind NextRunTooltip}"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                    </StackPanel>
-
-                                    <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-                                        <Button Tag="{x:Bind Id}" Click="RunNow_Click"
-                                                ToolTipService.ToolTip="Run now"
-                                                Padding="8,4" MinWidth="0">
-                                            <FontIcon Glyph="&#xE768;" FontSize="12" />
-                                        </Button>
-                                        <Button Tag="{x:Bind Id}" Click="Pause_Click"
-                                                ToolTipService.ToolTip="Pause"
-                                                Padding="8,4" MinWidth="0"
-                                                Visibility="{x:Bind app:Converters.BoolToCollapsed(IsPaused)}">
-                                            <FontIcon Glyph="&#xE769;" FontSize="12" />
-                                        </Button>
-                                        <Button Tag="{x:Bind Id}" Click="Resume_Click"
-                                                ToolTipService.ToolTip="Resume"
-                                                Padding="8,4" MinWidth="0"
-                                                Visibility="{x:Bind app:Converters.BoolToVisible(IsPaused)}">
-                                            <FontIcon Glyph="&#xE76E;" FontSize="12" />
-                                        </Button>
-                                        <Button Tag="{x:Bind Id}" Click="Edit_Click"
-                                                ToolTipService.ToolTip="Edit"
-                                                Padding="8,4" MinWidth="0">
-                                            <FontIcon Glyph="&#xE70F;" FontSize="12" />
-                                        </Button>
-                                        <Button Tag="{x:Bind Id}" Click="Delete_Click"
-                                                ToolTipService.ToolTip="Delete"
-                                                Padding="8,4" MinWidth="0">
-                                            <FontIcon Glyph="&#xE74D;" FontSize="12" />
-                                        </Button>
-                                    </StackPanel>
-
-                                    <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3"
-                                               Text="{x:Bind PromptPreview}"
+                                    </Border>
+                                    <TextBlock x:Name="DetailLastRunText"
+                                               ToolTipService.ToolTip=""
                                                Style="{StaticResource CaptionTextBlockStyle}"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                               TextWrapping="Wrap" />
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    x:Name="DetailRefreshButton"
+                                    Click="DetailRefresh_Click"
+                                    ToolTipService.ToolTip="Refresh this job from the gateway">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <ProgressRing x:Name="DetailRefreshSpinner" Width="14" Height="14"
+                                                  IsActive="False" Visibility="Collapsed" />
+                                    <FontIcon x:Name="DetailRefreshIcon" Glyph="&#xE72C;" FontSize="12" />
+                                    <TextBlock Text="Refresh" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
 
-                                    <InfoBar Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3"
-                                             Severity="Error"
-                                             IsClosable="False"
-                                             IsOpen="{x:Bind HasLastError}"
-                                             Message="{x:Bind LastErrorLabel}" />
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsRepeater.ItemTemplate>
-                </ItemsRepeater>
-            </ScrollViewer>
+                        <!-- Schedule + next-run + delivery summary -->
+                        <Grid Grid.Row="1" ColumnSpacing="24">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Schedule"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                <TextBlock x:Name="DetailScheduleText"
+                                           FontFamily="Consolas"
+                                           TextWrapping="Wrap" />
+                                <TextBlock x:Name="DetailNextRunText"
+                                           ToolTipService.ToolTip=""
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="Delivery"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                <TextBlock x:Name="DetailDeliverText" />
+                                <TextBlock x:Name="DetailModelText"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <!--
+                          Failure surfaces. The two InfoBars are independent
+                          because last_error and last_delivery_error mean
+                          different things on the gateway side — the run
+                          itself failed vs the deliver channel failed.
+                          The gateway has no log/output endpoint
+                          (probed: /log, /logs, /runs, /output all 404),
+                          so these last_* fields are the only failure
+                          context we have.
+                        -->
+                        <InfoBar Grid.Row="2"
+                                 x:Name="DetailLastErrorBar"
+                                 Severity="Error"
+                                 IsClosable="False"
+                                 IsOpen="False"
+                                 Title="Last run failed"
+                                 Message="" />
+                        <InfoBar Grid.Row="3"
+                                 x:Name="DetailDeliveryErrorBar"
+                                 Severity="Warning"
+                                 IsClosable="False"
+                                 IsOpen="False"
+                                 Title="Delivery failed"
+                                 Message="" />
+
+                        <!-- Prompt section header -->
+                        <TextBlock Grid.Row="4"
+                                   Text="Prompt"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
+                        <!-- Prompt body (scrollable, read-only) -->
+                        <Border Grid.Row="5"
+                                BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                MinHeight="100">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <TextBlock x:Name="DetailPromptText"
+                                           Padding="12,8"
+                                           TextWrapping="Wrap"
+                                           IsTextSelectionEnabled="True" />
+                            </ScrollViewer>
+                        </Border>
+
+                        <!-- Action bar -->
+                        <StackPanel Grid.Row="6"
+                                    Orientation="Horizontal"
+                                    Spacing="6"
+                                    HorizontalAlignment="Right">
+                            <Button x:Name="DetailRunButton"
+                                    Click="DetailRun_Click"
+                                    ToolTipService.ToolTip="Run now">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE768;" FontSize="12" />
+                                    <TextBlock Text="Run now" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="DetailPauseButton"
+                                    Click="DetailPause_Click"
+                                    Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE769;" FontSize="12" />
+                                    <TextBlock Text="Pause" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="DetailResumeButton"
+                                    Click="DetailResume_Click"
+                                    Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE76E;" FontSize="12" />
+                                    <TextBlock Text="Resume" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="DetailEditButton"
+                                    Click="DetailEdit_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE70F;" FontSize="12" />
+                                    <TextBlock Text="Edit" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="DetailDeleteButton"
+                                    Click="DetailDelete_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE74D;" FontSize="12" />
+                                    <TextBlock Text="Delete" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Empty selection state — sits in the right column when no job is selected -->
+                <StackPanel Grid.Column="1"
+                            x:Name="DetailEmptyState"
+                            Spacing="10"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE823;" FontSize="32"
+                              Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    <TextBlock Style="{StaticResource BodyTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               HorizontalAlignment="Center"
+                               Text="Select a job to see details" />
+                </StackPanel>
+            </Grid>
 
             <StackPanel Grid.Row="1"
                         x:Name="EmptyState" Spacing="12"
