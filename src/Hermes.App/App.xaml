@@ -10,7 +10,41 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
                 <!-- Other merged dictionaries here -->
             </ResourceDictionary.MergedDictionaries>
-            <!-- Other app resources here -->
+
+            <!--
+                Code-block theme palette. Used by Hermes.App.Markdown.SyntaxHighlighter
+                via Hermes.App.Controls.CodeBlockControl. Colors are tuned to read
+                well on the Mica + Card stack without being eye-bleed neon.
+            -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="HermesCodeBackgroundBrush" Color="#0F000000" />
+                    <SolidColorBrush x:Key="HermesCodePlainBrush"      Color="#FF1F1F1F" />
+                    <SolidColorBrush x:Key="HermesCodeKeywordBrush"    Color="#FF0000C0" />
+                    <SolidColorBrush x:Key="HermesCodeStringBrush"     Color="#FFA31515" />
+                    <SolidColorBrush x:Key="HermesCodeNumberBrush"     Color="#FF098658" />
+                    <SolidColorBrush x:Key="HermesCodeCommentBrush"    Color="#FF008000" />
+                    <SolidColorBrush x:Key="HermesCodeTypeBrush"       Color="#FF267F99" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="HermesCodeBackgroundBrush" Color="#33000000" />
+                    <SolidColorBrush x:Key="HermesCodePlainBrush"      Color="#FFE6E6E6" />
+                    <SolidColorBrush x:Key="HermesCodeKeywordBrush"    Color="#FF569CD6" />
+                    <SolidColorBrush x:Key="HermesCodeStringBrush"     Color="#FFCE9178" />
+                    <SolidColorBrush x:Key="HermesCodeNumberBrush"     Color="#FFB5CEA8" />
+                    <SolidColorBrush x:Key="HermesCodeCommentBrush"    Color="#FF6A9955" />
+                    <SolidColorBrush x:Key="HermesCodeTypeBrush"       Color="#FF4EC9B0" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="HermesCodeBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="HermesCodePlainBrush"      Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="HermesCodeKeywordBrush"    Color="{ThemeResource SystemColorHighlightColor}" />
+                    <SolidColorBrush x:Key="HermesCodeStringBrush"     Color="{ThemeResource SystemColorHotlightColor}" />
+                    <SolidColorBrush x:Key="HermesCodeNumberBrush"     Color="{ThemeResource SystemColorHighlightColor}" />
+                    <SolidColorBrush x:Key="HermesCodeCommentBrush"    Color="{ThemeResource SystemColorGrayTextColor}" />
+                    <SolidColorBrush x:Key="HermesCodeTypeBrush"       Color="{ThemeResource SystemColorHighlightColor}" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -122,6 +122,28 @@ public sealed partial class ChatPage : Page
     }
 
     /// <summary>
+    /// Copies the raw markdown content of the assistant message into the
+    /// clipboard. Useful because <see cref="Microsoft.UI.Xaml.Controls.RichTextBlock"/>
+    /// text selection in WinUI 3 can't span multiple block elements (so the
+    /// user can't drag-select an entire reply that has code fences inside).
+    /// </summary>
+    private void CopyResponse_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+        if (fe.DataContext is not MessageVm vm) return;
+        try
+        {
+            var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            pkg.SetText(vm.Content ?? string.Empty);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
+        }
+        catch
+        {
+            // Clipboard contention happens occasionally; the user can just retry.
+        }
+    }
+
+    /// <summary>
     /// Tracks whether the user is "near the bottom" so we can keep auto-scrolling
     /// when assistant tokens stream in, but stop fighting them if they scrolled up
     /// to read history.
