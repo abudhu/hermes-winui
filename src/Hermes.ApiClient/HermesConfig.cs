@@ -17,6 +17,12 @@ public sealed class HermesConfig
     public string ModelName { get; }
     public Uri BaseAddress => new($"http://{Host}:{Port}/");
 
+    /// <summary>Full path to the <c>.env</c> file inside
+    /// <see cref="ConfigDirectory"/>. Exposed so the Settings page can
+    /// edit it (via <c>EnvFileWriter.Save</c>) without re-deriving the
+    /// path.</summary>
+    public string EnvFilePath => Path.Combine(ConfigDirectory, ".env");
+
     private HermesConfig(string dir, IReadOnlyDictionary<string, string> env)
     {
         ConfigDirectory = dir;

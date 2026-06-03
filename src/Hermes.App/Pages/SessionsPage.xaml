@@ -58,82 +58,111 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <ListView x:Name="SessionList"
-                      Grid.Column="0"
-                      ItemsSource="{x:Bind GroupedSessionsSource.View, Mode=OneWay}"
-                      SelectionChanged="SessionList_SelectionChanged"
-                      SelectionMode="Single"
-                      IsItemClickEnabled="False"
-                      Padding="12,8">
-                <ListView.ItemContainerStyle>
-                    <Style TargetType="ListViewItem">
-                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        <Setter Property="Padding" Value="12,10" />
-                    </Style>
-                </ListView.ItemContainerStyle>
-                <ListView.GroupStyle>
-                    <GroupStyle HidesIfEmpty="True">
-                        <GroupStyle.HeaderTemplate>
-                            <DataTemplate x:DataType="vm:SessionGroupVm">
-                                <Border Padding="4,12,4,4">
-                                    <TextBlock Text="{x:Bind Header}"
-                                               Style="{StaticResource CaptionTextBlockStyle}"
-                                               FontWeight="SemiBold"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                </Border>
-                            </DataTemplate>
-                        </GroupStyle.HeaderTemplate>
-                    </GroupStyle>
-                </ListView.GroupStyle>
-                <ListView.ItemTemplate>
-                    <DataTemplate x:DataType="vm:SessionRowVm">
-                        <StackPanel Spacing="4">
-                            <Grid ColumnSpacing="8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0"
-                                           Text="{x:Bind Title}"
-                                           Style="{StaticResource BodyStrongTextBlockStyle}"
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <AutoSuggestBox x:Name="SearchBox"
+                                Grid.Row="0"
+                                Margin="12,8,12,4"
+                                PlaceholderText="Search sessions…"
+                                QueryIcon="Find"
+                                TextChanged="SearchBox_TextChanged" />
+
+                <ListView x:Name="SessionList"
+                          Grid.Row="1"
+                          ItemsSource="{x:Bind GroupedSessionsSource.View, Mode=OneWay}"
+                          SelectionChanged="SessionList_SelectionChanged"
+                          SelectionMode="Single"
+                          IsItemClickEnabled="False"
+                          Padding="12,4,12,8">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="12,10" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.GroupStyle>
+                        <GroupStyle HidesIfEmpty="True">
+                            <GroupStyle.HeaderTemplate>
+                                <DataTemplate x:DataType="vm:SessionGroupVm">
+                                    <Border Padding="4,12,4,4">
+                                        <TextBlock Text="{x:Bind Header}"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Border>
+                                </DataTemplate>
+                            </GroupStyle.HeaderTemplate>
+                        </GroupStyle>
+                    </ListView.GroupStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="vm:SessionRowVm">
+                            <StackPanel Spacing="4">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               Text="{x:Bind Title}"
+                                               Style="{StaticResource BodyStrongTextBlockStyle}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <Border Grid.Column="1"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            CornerRadius="4"
+                                            Padding="6,1">
+                                        <TextBlock Text="{x:Bind Source}"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Border>
+                                </Grid>
+                                <TextBlock Text="{x:Bind Preview}"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           MaxLines="1"
                                            TextTrimming="CharacterEllipsis" />
-                                <Border Grid.Column="1"
-                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                        CornerRadius="4"
-                                        Padding="6,1">
-                                    <TextBlock Text="{x:Bind Source}"
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <TextBlock Text="{x:Bind LastActiveRelative}"
                                                Style="{StaticResource CaptionTextBlockStyle}"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                </Border>
-                            </Grid>
-                            <TextBlock Text="{x:Bind Preview}"
-                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       MaxLines="1"
-                                       TextTrimming="CharacterEllipsis" />
-                            <StackPanel Orientation="Horizontal" Spacing="10">
-                                <TextBlock Text="{x:Bind LastActiveRelative}"
-                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                <TextBlock Text="•"
-                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                <TextBlock Text="{x:Bind MessageCountText}"
-                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                <Border Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
-                                        CornerRadius="4"
-                                        Padding="6,0"
-                                        Visibility="{x:Bind app:Converters.BoolToVisible(IsOpen)}">
-                                    <TextBlock Text="open"
+                                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                    <TextBlock Text="•"
                                                Style="{StaticResource CaptionTextBlockStyle}"
-                                               Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
-                                </Border>
+                                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                    <TextBlock Text="{x:Bind MessageCountText}"
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                    <Border Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                                            CornerRadius="4"
+                                            Padding="6,0"
+                                            Visibility="{x:Bind app:Converters.BoolToVisible(IsOpen)}">
+                                        <TextBlock Text="open"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
+                                    </Border>
+                                </StackPanel>
                             </StackPanel>
-                        </StackPanel>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <!-- Empty state when filter matches nothing -->
+                <StackPanel x:Name="NoMatchesPanel"
+                            Grid.Row="1"
+                            Visibility="Collapsed"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="6">
+                    <FontIcon Glyph="&#xE721;" FontSize="28"
+                              Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    <TextBlock x:Name="NoMatchesText"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
+            </Grid>
 
             <Border Grid.Column="1"
                     Width="1"

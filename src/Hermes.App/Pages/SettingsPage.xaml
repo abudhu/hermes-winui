@@ -23,41 +23,99 @@
                         CornerRadius="8"
                         Padding="20,16">
                     <StackPanel Spacing="14">
-                        <Grid ColumnSpacing="16">
+
+                        <!-- Host + Port -->
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="180" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="100" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Text="Host"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock Grid.Row="0" Grid.Column="2"
+                                       VerticalAlignment="Center"
+                                       Text="Port"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBox x:Name="HostBox"
+                                     Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                     FontFamily="Consolas"
+                                     PlaceholderText="127.0.0.1"
+                                     TextChanged="Field_Changed" />
+                            <NumberBox x:Name="PortBox"
+                                       Grid.Row="1" Grid.Column="2"
+                                       Margin="0"
+                                       Minimum="1"
+                                       Maximum="65535"
+                                       SpinButtonPlacementMode="Hidden"
+                                       ValueChanged="Field_Changed" />
+                        </Grid>
+
+                        <!-- Model -->
+                        <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="180" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="Base URL"
+                            <TextBlock Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Text="Model"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock x:Name="BaseUrlText" Grid.Column="1"
-                                       FontFamily="Consolas"
-                                       IsTextSelectionEnabled="True"
-                                       Text="—" />
+                            <TextBox x:Name="ModelBox"
+                                     Grid.Column="1"
+                                     FontFamily="Consolas"
+                                     PlaceholderText="hermes-agent"
+                                     TextChanged="Field_Changed" />
                         </Grid>
-                        <Grid ColumnSpacing="16">
+
+                        <!-- API key (masked, with reveal + rotate + copy) -->
+                        <Grid ColumnSpacing="8" RowSpacing="6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="180" />
                                 <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="Model"
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Text="API key"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock x:Name="ModelText" Grid.Column="1"
-                                       FontFamily="Consolas"
-                                       IsTextSelectionEnabled="True"
+                            <PasswordBox x:Name="ApiKeyBox"
+                                         Grid.Row="0" Grid.Column="1"
+                                         FontFamily="Consolas"
+                                         PasswordRevealMode="Peek"
+                                         PasswordChanged="ApiKeyBox_PasswordChanged" />
+                            <Button Grid.Row="0" Grid.Column="2"
+                                    Click="GenerateKey_Click"
+                                    ToolTipService.ToolTip="Generate a cryptographically random key">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                    <TextBlock Text="Generate" />
+                                </StackPanel>
+                            </Button>
+                            <Button Grid.Row="0" Grid.Column="3"
+                                    Click="CopyKey_Click"
+                                    ToolTipService.ToolTip="Copy the current key to clipboard">
+                                <FontIcon Glyph="&#xE8C8;" FontSize="14" />
+                            </Button>
+                            <TextBlock x:Name="ApiKeyHint"
+                                       Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                        Text="—" />
                         </Grid>
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="180" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="API key"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock x:Name="ApiKeyText" Grid.Column="1"
-                                       FontFamily="Consolas"
-                                       Text="—" />
-                        </Grid>
+
+                        <!-- Config directory (still read-only; we don't move .env) -->
                         <Grid ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="180" />
@@ -65,18 +123,53 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="Config directory"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       VerticalAlignment="Center" />
                             <TextBlock x:Name="ConfigDirText" Grid.Column="1"
                                        FontFamily="Consolas"
                                        IsTextSelectionEnabled="True"
                                        TextWrapping="Wrap"
+                                       VerticalAlignment="Center"
                                        Text="—" />
                             <Button Grid.Column="2"
-                                    Click="OpenConfig_Click"
-                                    Margin="8,0,0,0">
+                                    Click="OpenConfig_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE838;" FontSize="14" />
                                     <TextBlock Text="Open" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <!-- Save/Revert + status InfoBar -->
+                        <InfoBar x:Name="SaveStatusBar"
+                                 IsOpen="False"
+                                 IsClosable="True"
+                                 Severity="Informational" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="DirtyHint"
+                                       Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                       Text="" />
+                            <Button x:Name="RevertButton"
+                                    Grid.Column="1"
+                                    Click="Revert_Click"
+                                    IsEnabled="False"
+                                    Content="Revert" />
+                            <Button x:Name="SaveButton"
+                                    Grid.Column="2"
+                                    Click="Save_Click"
+                                    IsEnabled="False"
+                                    Style="{StaticResource AccentButtonStyle}">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE74E;" FontSize="14" />
+                                    <TextBlock Text="Save" />
                                 </StackPanel>
                             </Button>
                         </Grid>

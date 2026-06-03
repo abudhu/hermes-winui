@@ -18,6 +18,11 @@ public sealed class SessionRowVm
     public bool IsOpen { get; set; }
     public string Preview { get; set; } = "";
     public string LastActiveRelative { get; set; } = "—";
+
+    /// <summary>Epoch-seconds last-active timestamp, kept around so the
+    /// SessionsPage can re-bucket rows by date after filtering without
+    /// having to hold on to the raw <see cref="SessionSummary"/>.</summary>
+    public double? LastActiveEpoch { get; set; }
     public string MessageCountText => $"{MessageCount ?? 0} msg";
 
     public static SessionRowVm FromSummary(SessionSummary s)
@@ -35,6 +40,7 @@ public sealed class SessionRowVm
             IsOpen = s.IsOpen,
             Preview = s.Preview ?? "",
             LastActiveRelative = Converters.EpochSecondsToRelative(s.LastActive),
+            LastActiveEpoch = s.LastActive ?? s.StartedAt,
         };
     }
 }

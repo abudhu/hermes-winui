@@ -27,6 +27,13 @@ public sealed partial class SessionsPage : Page
 
     public ObservableCollection<MessageRowVm> Messages { get; } = [];
 
+    /// <summary>
+    /// Cached flat list of every loaded session — the source of truth for
+    /// search. <see cref="Groups"/> is a derived view rebuilt from this
+    /// whenever the user types in the search box or hits Refresh.
+    /// </summary>
+    private readonly List<SessionRowVm> _allRows = [];
+
     public SessionsPage()
     {
         _api = App.Services.GetRequiredService<HermesApiClient>();
@@ -53,43 +60,113 @@ public sealed partial class SessionsPage : Page
         try
         {
             var list = await _api.GetSessionsAsync(50, true, CancellationToken.None);
-            Groups.Clear();
-            if (list?.Data is null) { Subtitle.Text = "No sessions"; return; }
-
-            // Bucket each session by last-active date, then sort groups by
-            // SortKey descending so Today lands at the top. Within each group
-            // sessions are ordered most-recently-active first.
-            var bucketed = list.Data
-                .Select(s => (
-                    Summary: s,
-                    Bucket: DateGroupHelper.BucketForEpochSeconds(s.LastActive ?? s.StartedAt)))
-                .GroupBy(t => t.Bucket.SortKey, t => t)
-                .OrderByDescending(g => g.Key)
-                .ToList();
-
-            int total = 0;
-            int open = 0;
-            foreach (var group in bucketed)
+            _allRows.Clear();
+            if (list?.Data is null)
             {
-                var label = group.First().Bucket.Header;
-                var gvm = new SessionGroupVm(label, group.Key);
-                foreach (var t in group.OrderByDescending(t => t.Summary.LastActive ?? 0))
-                {
-                    var row = SessionRowVm.FromSummary(t.Summary);
-                    gvm.Items.Add(row);
-                    total++;
-                    if (row.IsOpen) open++;
-                }
-                Groups.Add(gvm);
+                Groups.Clear();
+                Subtitle.Text = "No sessions";
+                ApplyFilter();
+                return;
             }
 
-            Subtitle.Text = $"{total} session{(total == 1 ? "" : "s")} · {open} open";
+            foreach (var s in list.Data)
+            {
+                _allRows.Add(SessionRowVm.FromSummary(s));
+            }
+
+            ApplyFilter();
         }
         catch (Exception ex)
         {
             Subtitle.Text = $"Error: {ex.Message}";
         }
     }
+
+    private void SearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        // Only filter on user keystrokes — ignore programmatic text changes
+        // (e.g. the box clearing itself after selection).
+        if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
+        ApplyFilter();
+    }
+
+    /// <summary>
+    /// Rebuilds the grouped <see cref="Groups"/> view from <see cref="_allRows"/>,
+    /// optionally filtered by the SearchBox text. Match is case-insensitive
+    /// on Title and Preview. Empty groups self-hide via the GroupStyle's
+    /// <c>HidesIfEmpty="True"</c>.
+    /// </summary>
+    private void ApplyFilter()
+    {
+        var query = SearchBox.Text?.Trim() ?? "";
+        var hasQuery = query.Length > 0;
+
+        IEnumerable<SessionRowVm> matched = hasQuery
+            ? _allRows.Where(r => MatchesQuery(r, query))
+            : _allRows;
+        var matchedList = matched.ToList();
+
+        Groups.Clear();
+        var bucketed = matchedList
+            .Select(r => (Row: r, Bucket: DateGroupHelper.BucketForEpochSeconds(r.LastActiveEpoch)))
+            .GroupBy(t => t.Bucket.SortKey, t => t)
+            .OrderByDescending(g => g.Key);
+
+        int total = 0;
+        int open = 0;
+        foreach (var group in bucketed)
+        {
+            var header = group.First().Bucket.Header;
+            var gvm = new SessionGroupVm(header, group.Key);
+            foreach (var t in group.OrderByDescending(t => t.Row.LastActiveEpoch))
+            {
+                gvm.Items.Add(t.Row);
+                total++;
+                if (t.Row.IsOpen) open++;
+            }
+            Groups.Add(gvm);
+        }
+
+        // Subtitle + empty-state messaging
+        if (_allRows.Count == 0)
+        {
+            Subtitle.Text = "No sessions";
+            NoMatchesPanel.Visibility = Visibility.Collapsed;
+            SessionList.Visibility = Visibility.Visible;
+        }
+        else if (hasQuery && total == 0)
+        {
+            Subtitle.Text = $"0 of {_allRows.Count} match \u201c{query}\u201d";
+            NoMatchesText.Text = $"No sessions match \u201c{query}\u201d.";
+            NoMatchesPanel.Visibility = Visibility.Visible;
+            SessionList.Visibility = Visibility.Collapsed;
+        }
+        else if (hasQuery)
+        {
+            Subtitle.Text = $"{total} of {_allRows.Count} match \u201c{query}\u201d";
+            NoMatchesPanel.Visibility = Visibility.Collapsed;
+            SessionList.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            Subtitle.Text = $"{total} session{(total == 1 ? "" : "s")} \u00b7 {open} open";
+            NoMatchesPanel.Visibility = Visibility.Collapsed;
+            SessionList.Visibility = Visibility.Visible;
+        }
+    }
+
+    private static bool MatchesQuery(SessionRowVm row, string query)
+    {
+        // Case-insensitive contains on the most useful fields.
+        return Contains(row.Title, query)
+            || Contains(row.Preview, query)
+            || Contains(row.Model, query)
+            || Contains(row.Source, query);
+    }
+
+    private static bool Contains(string? haystack, string needle) =>
+        !string.IsNullOrEmpty(haystack) &&
+        haystack.Contains(needle, StringComparison.OrdinalIgnoreCase);
 
     private async void SessionList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
