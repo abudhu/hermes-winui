@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
@@ -50,6 +51,16 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
 
     /// <summary>Reference to the currently-streaming assistant message (so flushes don't have to search).</summary>
     private MessageVm? _currentAssistant;
+
+    /// <summary>
+    /// Run ids we've already accounted for in <see cref="SessionUsage"/>.
+    /// Guards against the gateway re-emitting <c>run.completed</c> (network
+    /// retry, reconnect, transient bug) and double-counting tokens into the
+    /// header chip. Cleared on <see cref="NewChat"/> and at the top of
+    /// <see cref="ResumeSessionAsync"/> since both transition to a fresh
+    /// session context.
+    /// </summary>
+    private readonly HashSet<string> _seenRunIds = new(StringComparer.Ordinal);
 
     public ObservableCollection<MessageVm> Messages { get; } = [];
 
@@ -106,6 +117,14 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
 
     public bool HasSessionUsage => SessionUsage is { HasAny: true } || SessionCostUsd is > 0;
 
+    /// <summary>Tooltip text for the session-total chip. Conditional on
+    /// whether <see cref="SessionCostUsd"/> is actually rendered alongside
+    /// the token count — saying "and estimated cost" when no cost is
+    /// shown would be a lie.</summary>
+    public string SessionUsageTooltip => SessionCostUsd is > 0
+        ? "Total tokens and estimated cost for this session"
+        : "Total tokens used in this session";
+
     partial void OnSessionUsageChanged(UsageStats? value)
     {
         OnPropertyChanged(nameof(SessionUsageLine));
@@ -116,6 +135,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(SessionUsageLine));
         OnPropertyChanged(nameof(HasSessionUsage));
+        OnPropertyChanged(nameof(SessionUsageTooltip));
     }
 
     public ChatViewModel(HermesApiClient api, HermesStreamingClient stream, DispatcherQueue dispatcher)
@@ -244,6 +264,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         SessionTitle = null;
         SessionUsage = null;
         SessionCostUsd = null;
+        _seenRunIds.Clear();
         StatusText = "Ready";
     }
 
@@ -271,6 +292,12 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
 
         IsBusy = true;
         StatusText = "Loading session…";
+
+        // Reset the dedupe set now that we're transitioning to a different
+        // session context — RunIds aren't unique across sessions, and we
+        // want any future run.completed on the resumed session to count
+        // even if its id happened to collide with one we saw earlier.
+        _seenRunIds.Clear();
 
         // 2. Fetch into LOCAL variables first so a fetch failure doesn't
         //    leave the UI showing a cleared transcript bound to a session
@@ -423,6 +450,17 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
 
     private void OnRunCompleted(MessageVm msg, RunCompletedEvent rc)
     {
+        // Idempotency guard: if the gateway re-emits run.completed (network
+        // retry, reconnect, etc.) we'd otherwise double-count tokens AND
+        // could clobber Usage/Content with stale data from the re-emit.
+        // Key on run_id when present; bail entirely. If run_id is missing
+        // we fall through and process normally — losing dedupe is better
+        // than dropping a real terminal event.
+        if (!string.IsNullOrEmpty(rc.RunId) && !_seenRunIds.Add(rc.RunId))
+        {
+            return;
+        }
+
         // Belt-and-braces: run.completed also carries the final assistant
         // content in its messages[] array. Use it as a last-resort fallback
         // if everything before us was empty.

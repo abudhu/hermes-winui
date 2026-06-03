@@ -31,11 +31,16 @@ public sealed record UsageStats(
             ? null
             : (InputTokens ?? 0) + (OutputTokens ?? 0);
 
-    public bool HasAny => InputTokens is not null
-                       || OutputTokens is not null
-                       || CachedReadTokens is not null
-                       || CachedWriteTokens is not null
-                       || ReasoningTokens is not null;
+    /// <summary>True only when at least one field reports a positive count.
+    /// Treats both <see langword="null"/> and <c>0</c> as "nothing to show"
+    /// — explicit zeros from the gateway (e.g. <c>{"input_tokens": 0}</c>)
+    /// are noise, not signal, and the chip / footer should stay hidden
+    /// rather than render "↓ 0 in · ↑ 0 out".</summary>
+    public bool HasAny => InputTokens is > 0
+                       || OutputTokens is > 0
+                       || CachedReadTokens is > 0
+                       || CachedWriteTokens is > 0
+                       || ReasoningTokens is > 0;
 
     /// <summary>
     /// Combines two usage snapshots. Used to roll per-turn usage into a

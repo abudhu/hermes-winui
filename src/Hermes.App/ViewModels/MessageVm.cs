@@ -118,11 +118,15 @@ public sealed partial class MessageVm : ObservableObject
     {
         if (u is null || !u.HasAny) return string.Empty;
         var sb = new StringBuilder();
-        if (u.InputTokens is long inT)
+        // Gate every field on > 0 (not just non-null): a gateway-reported
+        // zero is noise, not signal, and rendering "↓ 0 in" alongside a
+        // real "↑ 234 out" looks broken. Matches the cached/reasoning
+        // behavior below.
+        if (u.InputTokens is long inT && inT > 0)
         {
             sb.Append('\u2193').Append(' ').Append(FormatCount(inT, compact)).Append(" in");
         }
-        if (u.OutputTokens is long outT)
+        if (u.OutputTokens is long outT && outT > 0)
         {
             if (sb.Length > 0) sb.Append(" \u00b7 ");
             sb.Append('\u2191').Append(' ').Append(FormatCount(outT, compact)).Append(" out");

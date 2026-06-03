@@ -306,14 +306,16 @@
                                Text="No session yet" />
                 </StackPanel>
                 <!-- Running session totals: hidden until the first run completes
-                     (or until ResumeSessionAsync seeds from SessionDetail). -->
+                     (or until ResumeSessionAsync seeds from SessionDetail).
+                     Tooltip text is conditional on whether SessionCostUsd
+                     is actually rendered (driven by SessionUsageTooltip). -->
                 <Border Grid.Column="1"
                         VerticalAlignment="Center"
                         Background="{ThemeResource SubtleFillColorSecondaryBrush}"
                         CornerRadius="6"
                         Padding="8,3"
                         Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.HasSessionUsage), Mode=OneWay}"
-                        ToolTipService.ToolTip="Total tokens used in this session">
+                        ToolTipService.ToolTip="{x:Bind ViewModel.SessionUsageTooltip, Mode=OneWay}">
                     <TextBlock Text="{x:Bind ViewModel.SessionUsageLine, Mode=OneWay}"
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
