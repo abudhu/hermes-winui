@@ -89,6 +89,10 @@ public sealed class HermesStreamingClient : IDisposable
         }
         catch
         {
+            // Network failures, gateway shutdown mid-stop, etc. The boolean
+            // return is the caller's "did the stop take effect" signal — they
+            // already surface a status string on false, so swallowing and
+            // returning false here is the contract, not a missed exception.
             return false;
         }
     }

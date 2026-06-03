@@ -401,7 +401,12 @@ public static class MarkdownRenderer
         // we wire our own click so we can keep the validation in one place.
         h.Click += async (s, e) =>
         {
-            try { await Launcher.LaunchUriAsync(uri); } catch { /* ignored */ }
+            // LaunchUriAsync can fail if no handler is registered for the
+            // scheme or if the shell denies the launch; there's nothing
+            // useful we can do from a markdown render context, so we swallow
+            // and the user will retry. Validation above already restricts
+            // schemes to http/https.
+            try { await Launcher.LaunchUriAsync(uri); } catch { }
         };
         // Append link-text children as nested inlines so emphasis inside a
         // link still renders correctly.
