@@ -71,8 +71,30 @@ public sealed class NotificationService
             _registered = true;
         }
 
-        AppNotificationManager.Default.NotificationInvoked += OnNotificationInvoked;
-        AppNotificationManager.Default.Register();
+        // Toast registration can fail on machines whose COM activator
+        // wiring (declared in Package.appxmanifest) doesn't resolve at
+        // runtime — e.g. arch mismatch, missing WindowsAppSDK Singleton,
+        // or stale loose-file deployment. Degrade gracefully: log the
+        // failure and continue. The app starts; toasts no-op.
+        try
+        {
+            AppNotificationManager.Default.NotificationInvoked += OnNotificationInvoked;
+            AppNotificationManager.Default.Register();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[NotificationService] Register failed: {ex.GetType().Name}: {ex.Message}");
+            lock (_gate) { _registerFailed = true; }
+        }
+    }
+
+    private static bool _registerFailed;
+
+    /// <summary>True if the early toast registration failed; callers can
+    /// surface a one-time hint to the user but should otherwise carry on.</summary>
+    public static bool RegisterFailed
+    {
+        get { lock (_gate) { return _registerFailed; } }
     }
 
     /// <summary>
