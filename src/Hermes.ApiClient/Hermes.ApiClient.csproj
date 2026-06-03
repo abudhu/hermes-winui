@@ -10,4 +10,8 @@
     <PackageReference Include="YamlDotNet" Version="18.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hermes.ApiClient.Tests" />
+  </ItemGroup>
+
 </Project>
