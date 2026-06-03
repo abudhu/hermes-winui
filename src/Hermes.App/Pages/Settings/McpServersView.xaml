@@ -6,6 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:vm="using:Hermes.App.ViewModels.Settings"
+    x:Name="Root"
     mc:Ignorable="d">
 
     <Grid ColumnSpacing="16" RowSpacing="12">
@@ -54,34 +55,66 @@
                           SelectionChanged="ServerList_SelectionChanged">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="vm:McpServerItemVm">
-                            <Grid RowSpacing="4" Padding="2,4,2,4">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-                                <TextBlock Grid.Row="0"
-                                           Text="{x:Bind Name, Mode=OneWay}"
-                                           Style="{StaticResource BodyStrongTextBlockStyle}"
-                                           TextTrimming="CharacterEllipsis" />
-                                <StackPanel Grid.Row="1"
-                                            Orientation="Horizontal"
-                                            Spacing="4">
-                                    <Border Background="{ThemeResource ControlFillColorSecondaryBrush}"
-                                            CornerRadius="4"
-                                            Padding="6,1">
-                                        <TextBlock Text="{x:Bind Transport, Mode=OneWay}"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    </Border>
-                                    <Border Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                                            CornerRadius="4"
-                                            Padding="6,1"
-                                            Visibility="{x:Bind IsDisabled, Mode=OneWay}">
-                                        <TextBlock Text="disabled"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource SystemFillColorCautionBrush}" />
-                                    </Border>
-                                </StackPanel>
+                            <Grid ColumnSpacing="8" Padding="2,4,2,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid Grid.Column="0" RowSpacing="4">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0"
+                                               Text="{x:Bind Name, Mode=OneWay}"
+                                               Style="{StaticResource BodyStrongTextBlockStyle}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <StackPanel Grid.Row="1"
+                                                Orientation="Horizontal"
+                                                Spacing="4">
+                                        <Border Background="{ThemeResource ControlFillColorSecondaryBrush}"
+                                                CornerRadius="4"
+                                                Padding="6,1">
+                                            <TextBlock Text="{x:Bind Transport, Mode=OneWay}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </Border>
+                                        <Border Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                                CornerRadius="4"
+                                                Padding="6,1"
+                                                Visibility="{x:Bind IsDisabled, Mode=OneWay}">
+                                            <TextBlock Text="disabled"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                                        </Border>
+                                    </StackPanel>
+                                </Grid>
+                                <!--
+                                  Per-row enabled toggle. Bound one-way to
+                                  IsEnabled (computed from the body's
+                                  'enabled' key). Flips are handled in
+                                  code-behind via the Toggled event, which
+                                  saves immediately through the same
+                                  HermesYamlConfig.Save path the rest of
+                                  the editor uses. IsEnabled-on-the-control
+                                  is bound to the parent UserControl's
+                                  AreRowTogglesEnabled DependencyProperty
+                                  so editor-dirty state disables every row
+                                  toggle at once with a tooltip.
+                                  Tapped/PointerPressed handlers block the
+                                  click from also selecting the row.
+                                -->
+                                <ToggleSwitch Grid.Column="1"
+                                              VerticalAlignment="Center"
+                                              MinWidth="0"
+                                              OnContent=""
+                                              OffContent=""
+                                              IsOn="{x:Bind IsEnabled, Mode=OneWay}"
+                                              IsEnabled="{Binding ElementName=Root, Path=AreRowTogglesEnabled, Mode=OneWay}"
+                                              ToolTipService.ToolTip="{Binding ElementName=Root, Path=RowTogglesTooltip, Mode=OneWay}"
+                                              Toggled="RowEnabled_Toggled"
+                                              Tapped="RowToggle_Tapped"
+                                              PointerPressed="RowToggle_PointerPressed" />
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>
@@ -125,6 +158,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -162,7 +196,12 @@
                          IsClosable="True"
                          Severity="Warning"
                          Title="Restart the Hermes gateway to apply"
-                         Message="The Hermes gateway only discovers MCP servers at startup. Stop and restart hermes.exe (and its gateway process) for the WinUI chat to see your edits. New chat sessions started after restart will pick up the new tools." />
+                         Message="The Hermes gateway only discovers MCP servers at startup. Stop and restart hermes.exe (and its gateway process) for the WinUI chat to see your edits. New chat sessions started after restart will pick up the new tools.">
+                    <InfoBar.ActionButton>
+                        <Button Content="Show restart steps"
+                                Click="RestartHermes_Click" />
+                    </InfoBar.ActionButton>
+                </InfoBar>
 
                 <!-- Name -->
                 <Grid Grid.Row="3" ColumnSpacing="12">
@@ -181,8 +220,45 @@
                              TextChanged="Editor_Changed" />
                 </Grid>
 
+                <!--
+                  Editor-pane Enabled toggle. Source of truth is the JSON
+                  body (BodyBox) — flipping the toggle mutates the parsed
+                  body and re-serializes it into BodyBox; typing into
+                  BodyBox re-parses and reflects the resulting enabled
+                  state back into the toggle. When BodyBox isn't valid
+                  JSON the toggle is disabled with a hint caption so it
+                  never displays a stale or misleading state.
+                -->
+                <Grid Grid.Row="4" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text="Enabled"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                Spacing="12"
+                                VerticalAlignment="Center">
+                        <ToggleSwitch x:Name="EditorEnabledToggle"
+                                      MinWidth="0"
+                                      OnContent="On"
+                                      OffContent="Off"
+                                      IsOn="True"
+                                      Toggled="EditorEnabled_Toggled" />
+                        <TextBlock x:Name="EditorEnabledHint"
+                                   VerticalAlignment="Center"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   TextWrapping="Wrap"
+                                   Text="" />
+                    </StackPanel>
+                </Grid>
+
                 <!-- Secrets advisory -->
-                <TextBlock Grid.Row="4"
+                <TextBlock Grid.Row="5"
                            Margin="0,-4,0,0"
                            Style="{StaticResource CaptionTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
@@ -190,12 +266,12 @@
                            Text="Server JSON below. Values you paste here may include API tokens — they are written verbatim to your config.yaml." />
 
                 <!-- JSON body editor -->
-                <Border Grid.Row="5"
+                <Border Grid.Row="6"
                         BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
                         BorderThickness="1"
                         CornerRadius="4"
-                        MinHeight="320"
-                        MaxHeight="560">
+                        MinHeight="280"
+                        MaxHeight="520">
                     <ScrollViewer VerticalScrollBarVisibility="Auto"
                                   HorizontalScrollBarVisibility="Auto">
                         <TextBox x:Name="BodyBox"
@@ -203,23 +279,24 @@
                                  TextWrapping="NoWrap"
                                  FontFamily="Consolas"
                                  BorderThickness="0"
-                                 MinHeight="320"
-                                 TextChanged="Editor_Changed" />
+                                 MinHeight="280"
+                                 TextChanged="Body_Changed" />
                     </ScrollViewer>
                 </Border>
 
                 <!-- Status caption -->
-                <TextBlock Grid.Row="6"
+                <TextBlock Grid.Row="7"
                            x:Name="DirtyHint"
                            Style="{StaticResource CaptionTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                            Text="" />
 
                 <!-- Action row -->
-                <Grid Grid.Row="7" ColumnSpacing="8">
+                <Grid Grid.Row="8" ColumnSpacing="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
@@ -232,13 +309,22 @@
                             <TextBlock Text="Remove" />
                         </StackPanel>
                     </Button>
-                    <Button x:Name="RevertButton"
+                    <Button x:Name="RestartHermesButton"
                             Grid.Column="2"
+                            Click="RestartHermes_Click"
+                            ToolTipService.ToolTip="Show the command to restart the Hermes gateway so it picks up your MCP changes.">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                            <TextBlock Text="Restart Hermes" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="RevertButton"
+                            Grid.Column="3"
                             Click="Revert_Click"
                             IsEnabled="False"
                             Content="Revert" />
                     <Button x:Name="SaveButton"
-                            Grid.Column="3"
+                            Grid.Column="4"
                             Click="Save_Click"
                             IsEnabled="False"
                             Style="{StaticResource AccentButtonStyle}">

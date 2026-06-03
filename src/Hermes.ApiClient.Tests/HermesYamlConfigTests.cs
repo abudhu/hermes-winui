@@ -520,4 +520,103 @@ public class HermesYamlConfigTests : IDisposable
         var result = HermesYamlConfig.Save(path, token, servers, apiServerToolsets);
         Assert.Equal(YamlSaveStatus.Saved, result.Status);
     }
+
+    // ---- enabled: false round-trip ----------------------------------------
+    //
+    // These tests pin the per-server "enabled" key behaviour the MCP
+    // Enabled toggle relies on. The Hermes startup filter
+    // (tools/mcp_tool.py) reads `enabled` with a default of true, so:
+    //   * enabled: false  → server skipped at startup, kept in config.
+    //   * key absent      → server enabled (Hermes default).
+    // We never write `enabled: true` because that's the default — the
+    // toggle going from off → on REMOVES the key. The fixture exercises
+    // both shapes (one server with enabled:false mid-block, two without).
+
+    [Fact]
+    public void EnabledFalse_Round_Trips_Unchanged()
+    {
+        // Load a fixture that already has `enabled: false` on one server,
+        // re-save with the exact same servers (no edits), expect Unchanged
+        // — the field must round-trip through ExtractMcpServers without
+        // losing or normalizing the boolean.
+        var path = Stage("mcp-with-disabled-server.yaml");
+        var (servers, token) = HermesYamlConfig.Load(path);
+        Assert.Equal(3, servers.Count);
+
+        var filesystem = servers.Single(s => s.Name == "filesystem");
+        Assert.True(filesystem.Body.TryGetProperty("enabled", out var enFs));
+        Assert.Equal(JsonValueKind.False, enFs.ValueKind);
+
+        var workiq = servers.Single(s => s.Name == "workiq");
+        Assert.False(workiq.Body.TryGetProperty("enabled", out _));
+
+        var originalBytes = File.ReadAllBytes(path);
+        Thread.Sleep(50);
+
+        var result = HermesYamlConfig.Save(path, token, servers);
+        Assert.Equal(YamlSaveStatus.Unchanged, result.Status);
+        Assert.Equal(originalBytes, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void Add_Server_With_EnabledFalse()
+    {
+        // Adding a brand-new server that already has enabled:false in its
+        // JSON body should land in YAML with the field intact — this is
+        // the path taken when the user toggles Enabled off in the editor
+        // pane while creating a fresh server.
+        var path = Stage("existing-mcp-block.yaml");
+        var (servers, token) = HermesYamlConfig.Load(path);
+
+        var next = new List<McpServerEntry>(servers)
+        {
+            new("github",
+                JsonObj("""{ "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "enabled": false }""")),
+        };
+
+        var result = HermesYamlConfig.Save(path, token, next);
+        Assert.Equal(YamlSaveStatus.Saved, result.Status);
+
+        var written = File.ReadAllText(path);
+        Assert.Contains("github:", written, StringComparison.Ordinal);
+        Assert.Contains("enabled: false", written, StringComparison.Ordinal);
+
+        var (reloaded, _) = HermesYamlConfig.Load(path);
+        var gh = reloaded.Single(s => s.Name == "github");
+        Assert.True(gh.Body.TryGetProperty("enabled", out var en));
+        Assert.Equal(JsonValueKind.False, en.ValueKind);
+    }
+
+    [Fact]
+    public void Save_Without_Enabled_Removes_Field()
+    {
+        // Load a server with enabled:false, save it with the field
+        // stripped from its JSON body (what the editor toggle does when
+        // flipped from off to on), confirm the field is GONE from disk
+        // and not just normalised to `enabled: true`.
+        var path = Stage("mcp-with-disabled-server.yaml");
+        var (servers, token) = HermesYamlConfig.Load(path);
+
+        var filesystem = servers.Single(s => s.Name == "filesystem");
+        var bodyWithoutEnabled = JsonObj(
+            """{ "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"] }""");
+        var next = servers
+            .Select(s => s.Name == "filesystem"
+                ? new McpServerEntry("filesystem", bodyWithoutEnabled)
+                : s)
+            .ToList();
+
+        var result = HermesYamlConfig.Save(path, token, next);
+        Assert.Equal(YamlSaveStatus.Saved, result.Status);
+
+        var written = File.ReadAllText(path);
+        // The `enabled` line must be gone for the filesystem entry.
+        // Other entries don't have the field, so a substring check is
+        // enough — we don't expect "enabled" to appear anywhere.
+        Assert.DoesNotContain("enabled:", written, StringComparison.Ordinal);
+
+        var (reloaded, _) = HermesYamlConfig.Load(path);
+        var fs = reloaded.Single(s => s.Name == "filesystem");
+        Assert.False(fs.Body.TryGetProperty("enabled", out _));
+    }
 }
