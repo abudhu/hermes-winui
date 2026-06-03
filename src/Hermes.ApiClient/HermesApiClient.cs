@@ -17,6 +17,13 @@ public sealed class HermesApiClient : IDisposable
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true,
+        // Omit null fields from outgoing JSON bodies. Matters for
+        // CreateSessionRequest.Model in particular — passing the field as
+        // an explicit JSON null could be interpreted by the gateway as
+        // "force model = null" rather than "no preference, use the server
+        // default". The matching test in CreateSessionRequestTests already
+        // assumes this behaviour; this keeps prod aligned with that.
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
     };
 
     private readonly HttpClient _http;
