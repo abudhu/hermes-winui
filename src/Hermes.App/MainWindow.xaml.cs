@@ -354,20 +354,14 @@ public sealed partial class MainWindow : Window
 
     private void CtrlE_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
-        // TODO: bind to ChatViewModel.CopyAsMarkdownCommand when the
-        // parallel export sub-session lands it. Today the command doesn't
-        // exist (grep -n on ChatViewModel.cs at HEAD returns no match);
-        // shipping with the accelerator wired but no-op keeps the contract
-        // visible without breaking the build if the command name ends up
-        // different ("SaveAsMarkdownCommand", "ExportMarkdownCommand", …).
-        //
-        // Once it lands:
-        //   if (NavFrame.Content is ChatPage) {
-        //       var chat = App.Services.GetRequiredService<ChatViewModel>();
-        //       if (chat.CopyAsMarkdownCommand.CanExecute(null))
-        //           chat.CopyAsMarkdownCommand.Execute(null);
-        //       args.Handled = true;
-        //   }
+        if (NavFrame.Content is not ChatPage) return;
+
+        var chat = App.Services.GetRequiredService<ChatViewModel>();
+        if (chat.CopyAsMarkdownCommand.CanExecute(null))
+        {
+            chat.CopyAsMarkdownCommand.Execute(null);
+            args.Handled = true;
+        }
     }
 
     /// <summary>Called by ChatPage when its Ctrl+/ accelerator fires. Page
