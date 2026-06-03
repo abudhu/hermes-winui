@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 
@@ -61,6 +62,15 @@ public sealed partial class MessageVm : ObservableObject
     /// leak StackPanel spacing above the Content text and push the bubble's
     /// contents off-center.</summary>
     public bool HasToolCalls => ToolCalls.Count > 0;
+
+    /// <summary>Display name for the message header ("You" or "Hermes").
+    /// Computed from <see cref="Role"/> which is init-only, so this is
+    /// effectively a constant for the lifetime of the VM.</summary>
+    public string RoleLabel => Role == MessageRole.User ? "You" : "Hermes";
+
+    /// <summary>Short local time the message was authored (e.g. "2:05 PM").
+    /// Uses the current culture so users in 24h locales see "14:05".</summary>
+    public string TimeLabel => Timestamp.LocalDateTime.ToString("t", CultureInfo.CurrentCulture);
 
     partial void OnStateChanged(MessageState value) => OnPropertyChanged(nameof(IsStreaming));
     partial void OnReasoningChanged(string value) => OnPropertyChanged(nameof(HasReasoning));

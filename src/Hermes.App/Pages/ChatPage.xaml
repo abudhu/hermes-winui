@@ -12,10 +12,32 @@
 
     <Page.Resources>
 
-        <!-- User bubble: right-aligned, accent-tinted, slight shadow -->
+        <!-- User bubble: right-aligned, accent-tinted, slight shadow.
+             Outer Grid has two Auto rows: header (role + timestamp), then bubble. -->
         <DataTemplate x:Key="UserTemplate" x:DataType="vm:MessageVm">
             <Grid Padding="0,6,0,6" HorizontalAlignment="Stretch">
-                <Border MaxWidth="640"
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            Margin="0,0,4,4"
+                            Spacing="6">
+                    <TextBlock Text="{x:Bind RoleLabel}"
+                               FontWeight="SemiBold"
+                               FontSize="12"
+                               Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                    <TextBlock Text="{x:Bind TimeLabel}"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                </StackPanel>
+
+                <Border Grid.Row="1"
+                        MaxWidth="640"
                         HorizontalAlignment="Right"
                         Background="{ThemeResource AccentFillColorDefaultBrush}"
                         CornerRadius="12,12,2,12"
@@ -29,10 +51,32 @@
             </Grid>
         </DataTemplate>
 
-        <!-- Assistant bubble: left-aligned card with tool-call expanders -->
+        <!-- Assistant bubble: left-aligned card with tool-call expanders.
+             Outer Grid has two Auto rows: header (role + timestamp), then bubble. -->
         <DataTemplate x:Key="AssistantTemplate" x:DataType="vm:MessageVm">
             <Grid Padding="0,6,0,6" HorizontalAlignment="Stretch">
-                <Border MaxWidth="720"
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Left"
+                            Margin="4,0,0,4"
+                            Spacing="6">
+                    <TextBlock Text="{x:Bind RoleLabel}"
+                               FontWeight="SemiBold"
+                               FontSize="12"
+                               Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                    <TextBlock Text="{x:Bind TimeLabel}"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                </StackPanel>
+
+                <Border Grid.Row="1"
+                        MaxWidth="720"
                         HorizontalAlignment="Left"
                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
