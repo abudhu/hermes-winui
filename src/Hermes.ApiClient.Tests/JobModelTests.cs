@@ -218,4 +218,124 @@ public class JobModelTests
         Assert.Contains("\"deliver\":\"telegram\"", json);
         Assert.Contains("\"enabled\":true", json);
     }
+
+    /// <summary>
+    /// Lifted verbatim from a live <c>GET /api/jobs/{id}</c> probe against a
+    /// running gateway. The single-job endpoint returns the same per-job
+    /// shape as the list, wrapped in <c>{"job":{...}}</c>. The detail pane
+    /// + the explicit Refresh-now button on JobsPage round-trip through
+    /// this shape — guard against the same kind of typing regression we
+    /// hit with the list response.
+    /// </summary>
+    private const string LiveSingleJobJson = """
+    {
+      "job": {
+        "id": "a86879a55d53",
+        "name": "HoK Activities",
+        "prompt": "Read the file at C:\\Users\\ambudhu\\cron\\hok.md and follow the instructions.",
+        "skills": [],
+        "skill": null,
+        "model": null,
+        "provider": null,
+        "base_url": null,
+        "script": null,
+        "no_agent": false,
+        "context_from": null,
+        "schedule": {
+          "kind": "cron",
+          "expr": "0 15 * * 5",
+          "display": "0 15 * * 5"
+        },
+        "schedule_display": "0 15 * * 5",
+        "repeat": {
+          "times": null,
+          "completed": 0
+        },
+        "enabled": true,
+        "state": "scheduled",
+        "paused_at": null,
+        "paused_reason": null,
+        "created_at": "2026-06-03T13:59:24.201435-07:00",
+        "next_run_at": "2026-06-05T15:00:00-07:00",
+        "last_run_at": null,
+        "last_status": null,
+        "last_error": null,
+        "last_delivery_error": null,
+        "deliver": "local",
+        "origin": {
+          "platform": "api_server",
+          "chat_id": "api"
+        },
+        "enabled_toolsets": null,
+        "workdir": null,
+        "profile": null
+      }
+    }
+    """;
+
+    [Fact]
+    public void Deserialize_LiveSingleJobEnvelope_PopulatesAllRenderedFields()
+    {
+        var env = JsonSerializer.Deserialize<JobEnvelope>(LiveSingleJobJson, Opts);
+        Assert.NotNull(env);
+        Assert.NotNull(env!.Job);
+        var j = env.Job!;
+
+        // Identity + display fields the detail pane renders.
+        Assert.Equal("a86879a55d53", j.Id);
+        Assert.Equal("HoK Activities", j.Name);
+        Assert.StartsWith("Read the file at", j.Prompt);
+
+        // Schedule round-trips both flat and nested forms.
+        Assert.Equal("0 15 * * 5", j.ScheduleDisplay);
+        Assert.NotNull(j.Schedule);
+        Assert.Equal("cron", j.Schedule!.Kind);
+        Assert.Equal("0 15 * * 5", j.Schedule.Expr);
+
+        // Timestamps stay as ISO strings — same field-typing trap as the
+        // list endpoint, worth pinning at the contract layer.
+        Assert.Equal("2026-06-03T13:59:24.201435-07:00", j.CreatedAt);
+        Assert.Equal("2026-06-05T15:00:00-07:00", j.NextRunAt);
+        Assert.Null(j.LastRunAt);
+
+        // State + enabled — drive the status pill on the detail pane.
+        Assert.True(j.Enabled);
+        Assert.Equal("scheduled", j.State);
+        Assert.Null(j.PausedAt);
+        Assert.Null(j.LastStatus);
+        Assert.Null(j.LastError);
+        Assert.Null(j.LastDeliveryError);
+    }
+
+    [Fact]
+    public void Deserialize_TerminalJobEnvelope_CarriesLastStatusAndError()
+    {
+        // Hypothetical "finished + failed" snapshot — the gateway hasn't
+        // exposed a log endpoint, so the detail pane and the toast on
+        // Running→Failed transitions are driven entirely off these
+        // last_* fields. If the contract drifts (e.g. last_status flips
+        // to a numeric code, or last_error becomes a structured object),
+        // this test fires before the pipeline silently breaks.
+        const string finishedJson = """
+        {
+          "job": {
+            "id": "f1",
+            "name": "nightly",
+            "state": "scheduled",
+            "enabled": true,
+            "last_status": "failed",
+            "last_run_at": "2026-06-03T20:30:00-07:00",
+            "last_error": "Connection refused while delivering to telegram",
+            "last_delivery_error": "telegram: 401 unauthorized"
+          }
+        }
+        """;
+        var env = JsonSerializer.Deserialize<JobEnvelope>(finishedJson, Opts);
+        Assert.NotNull(env?.Job);
+        var j = env!.Job!;
+        Assert.Equal("failed", j.LastStatus);
+        Assert.Equal("2026-06-03T20:30:00-07:00", j.LastRunAt);
+        Assert.Equal("Connection refused while delivering to telegram", j.LastError);
+        Assert.Equal("telegram: 401 unauthorized", j.LastDeliveryError);
+    }
 }

@@ -77,6 +77,20 @@ public sealed class HermesApiClient : IDisposable
     public Task<JobList?> GetJobsAsync(CancellationToken ct = default) =>
         GetJsonAsync<JobList>("/api/jobs", ct);
 
+    /// <summary>
+    /// Single-job fetch via <c>GET /api/jobs/{id}</c>. The server wraps the
+    /// payload in the same <c>{"job": {...}}</c> envelope that the mutation
+    /// endpoints use, so we route through <see cref="SendForJobAsync"/> to
+    /// share the unwrap + error-formatting code path. Used by the detail-pane
+    /// "Refresh now" button on JobsPage; the polling loop still uses the
+    /// list endpoint to detect transitions across all jobs in one round-trip.
+    /// </summary>
+    public Task<Job?> GetJobAsync(string id, CancellationToken ct = default)
+    {
+        var msg = new HttpRequestMessage(HttpMethod.Get, $"/api/jobs/{Uri.EscapeDataString(id)}");
+        return SendForJobAsync(msg, ct);
+    }
+
     public async Task<Job?> CreateJobAsync(CreateJobRequest req, CancellationToken ct = default)
     {
         using var msg = new HttpRequestMessage(HttpMethod.Post, "/api/jobs")
