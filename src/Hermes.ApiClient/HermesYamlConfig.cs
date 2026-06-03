@@ -84,6 +84,23 @@ public static class HermesYamlConfig
     public const string PermanentBackupSuffix = ".before-hermes-winui.bak";
 
     /// <summary>
+    /// Reads the current <c>platform_toolsets.api_server</c> list from
+    /// the given file. Returns an empty list if the file, the
+    /// <c>platform_toolsets</c> key, or the <c>api_server</c> subkey is
+    /// absent. Used by the UI to detect "out of sync" state (i.e. saved
+    /// MCP servers that aren't yet opted into the API server platform).
+    /// </summary>
+    /// <exception cref="InvalidDataException">The current file on disk is
+    /// not parseable as YAML.</exception>
+    public static IReadOnlyList<string> ReadApiServerToolsets(string path)
+    {
+        if (!File.Exists(path)) return [];
+        var text = File.ReadAllText(path, Encoding.UTF8);
+        var plat = ExtractPlatformToolsets(text);
+        return plat.TryGetValue(ApiServerToolsetKey, out var list) ? list : [];
+    }
+
+    /// <summary>
     /// Loads the current <c>mcp_servers</c> entries (empty list if the
     /// key is absent or the file does not exist) and a concurrency token
     /// that callers must hand back on <see cref="Save"/>.

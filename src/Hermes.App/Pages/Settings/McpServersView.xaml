@@ -8,14 +8,28 @@
     xmlns:vm="using:Hermes.App.ViewModels.Settings"
     mc:Ignorable="d">
 
-    <Grid ColumnSpacing="16">
+    <Grid ColumnSpacing="16" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="240" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
+        <!-- TOP: gateway opt-in sync banner (spans both columns) -->
+        <InfoBar x:Name="GatewaySyncBar"
+                 Grid.Row="0"
+                 Grid.Column="0"
+                 Grid.ColumnSpan="2"
+                 IsOpen="False"
+                 IsClosable="False"
+                 Severity="Warning" />
+
         <!-- LEFT: server list + actions -->
-        <Border Grid.Column="0"
+        <Border Grid.Row="1"
+                Grid.Column="0"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"
@@ -97,7 +111,8 @@
         </Border>
 
         <!-- RIGHT: editor -->
-        <Border Grid.Column="1"
+        <Border Grid.Row="1"
+                Grid.Column="1"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"

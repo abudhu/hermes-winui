@@ -27,6 +27,13 @@ public sealed partial class McpServersView : UserControl
 
     private ConcurrencyToken? _token;
 
+    /// <summary>Snapshot of the on-disk
+    /// <c>platform_toolsets.api_server</c> list captured at load time.
+    /// Compared against what we WOULD write to decide whether the
+    /// "gateway opt-in is out of sync" hint should appear and whether
+    /// Save should light up even when the editor form isn't dirty.</summary>
+    private IReadOnlyList<string> _onDiskApiServer = [];
+
     /// <summary>The server currently selected in the list (or
     /// <c>null</c> for "New server"). Cached so we know whether to
     /// rename vs add when the user saves.</summary>
@@ -76,6 +83,7 @@ public sealed partial class McpServersView : UserControl
     {
         var (entries, token) = HermesYamlConfig.Load(_hermesConfig.ConfigYamlPath);
         _token = token;
+        _onDiskApiServer = HermesYamlConfig.ReadApiServerToolsets(_hermesConfig.ConfigYamlPath);
 
         Servers.Clear();
         foreach (var entry in entries)
@@ -83,6 +91,7 @@ public sealed partial class McpServersView : UserControl
             Servers.Add(McpServerItemVm.From(entry));
         }
         UpdateEmptyHint();
+        UpdateGatewaySyncBanner();
 
         // Re-select previous server by name if still present, else select
         // the first, else show "new server" form.
@@ -109,6 +118,45 @@ public sealed partial class McpServersView : UserControl
         EmptyHint.Visibility = Servers.Count == 0
             ? Visibility.Visible
             : Visibility.Collapsed;
+    }
+
+    /// <summary>True when the on-disk
+    /// <c>platform_toolsets.api_server</c> list doesn't include every
+    /// MCP server we know about (or includes stale entries). When this
+    /// is true the Save button lights up even without form edits, and
+    /// a banner explains why.</summary>
+    private bool IsGatewayOptInOutOfSync
+    {
+        get
+        {
+            var desired = BuildApiServerToolsets(Servers.Select(s => new McpServerEntry(s.Name, s.Body)).ToList());
+            if (desired.Count != _onDiskApiServer.Count) return true;
+            for (int i = 0; i < desired.Count; i++)
+            {
+                if (!string.Equals(desired[i], _onDiskApiServer[i], StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
+    }
+
+    private void UpdateGatewaySyncBanner()
+    {
+        if (IsGatewayOptInOutOfSync)
+        {
+            GatewaySyncBar.Title = "Gateway opt-in needs syncing";
+            GatewaySyncBar.Message =
+                "Your saved MCP servers aren't exposed to the WinUI chat yet. " +
+                "Click Save (on any server) to write `platform_toolsets.api_server` into config.yaml, " +
+                "then restart your Hermes gateway. Without this step, chats will say " +
+                "\"I don't have access\" when asked about MCP-backed data.";
+            GatewaySyncBar.Severity = InfoBarSeverity.Warning;
+            GatewaySyncBar.IsOpen = true;
+        }
+        else
+        {
+            GatewaySyncBar.IsOpen = false;
+        }
     }
 
     private void ServerList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -176,15 +224,27 @@ public sealed partial class McpServersView : UserControl
     private void UpdateButtons()
     {
         var dirty = IsEditorDirty;
-        // The Save button is enabled whenever the form has content (a
-        // new server with empty fields is also "savable" so validation
-        // can run and surface specific errors).
+        var apiOutOfSync = IsGatewayOptInOutOfSync;
+        // Save lights up when the editor form is dirty OR the gateway
+        // opt-in is out of sync — the latter case still produces a
+        // meaningful write even with no per-server edits.
         SaveButton.IsEnabled = _selected is null
             ? !string.IsNullOrWhiteSpace(NameBox.Text) || !string.IsNullOrWhiteSpace(BodyBox.Text)
-            : dirty;
+            : (dirty || apiOutOfSync);
         RevertButton.IsEnabled = dirty;
         RemoveButton.IsEnabled = _selected is not null;
-        DirtyHint.Text = dirty ? "Unsaved changes" : "";
+        if (dirty)
+        {
+            DirtyHint.Text = "Unsaved changes";
+        }
+        else if (apiOutOfSync)
+        {
+            DirtyHint.Text = "Gateway opt-in out of sync — click Save to update platform_toolsets.api_server";
+        }
+        else
+        {
+            DirtyHint.Text = "";
+        }
     }
 
     private void Revert_Click(object sender, RoutedEventArgs e)
