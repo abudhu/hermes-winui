@@ -41,26 +41,12 @@
                         Padding="14,10">
                     <StackPanel Spacing="8">
 
-                        <!-- Reasoning ("thinking") trail; only shown when present -->
-                        <Expander HorizontalAlignment="Stretch"
-                                  HorizontalContentAlignment="Stretch"
-                                  Visibility="{x:Bind app:Converters.BoolToVisible(HasReasoning), Mode=OneWay}">
-                            <Expander.Header>
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon Glyph="&#xE9D9;"
-                                              FontSize="14"
-                                              Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                                    <TextBlock Text="Thinking"
-                                               Style="{StaticResource BodyStrongTextBlockStyle}"
-                                               VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Expander.Header>
-                            <TextBlock Text="{x:Bind Reasoning, Mode=OneWay}"
-                                       TextWrapping="Wrap"
-                                       IsTextSelectionEnabled="True"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       FontSize="13" />
-                        </Expander>
+                        <!-- Reasoning ("thinking") trail is intentionally not shown:
+                             for Hermes the "_thinking" tool.progress content is
+                             usually identical to the final assistant reply, so an
+                             expander here is just visual noise. Buffer + Reasoning
+                             property still accumulate in MessageVm so a future
+                             setting can re-expose them. -->
 
                         <!-- Inline tool-call cards -->
                         <ItemsRepeater ItemsSource="{x:Bind ToolCalls, Mode=OneWay}">
