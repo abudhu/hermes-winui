@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using Hermes.App.Pages.Chat;
 using Hermes.App.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
@@ -37,7 +38,7 @@ public sealed partial class ChatPage : Page
         // navigation away and back. This is what makes SessionsPage's
         // "Resume conversation" handoff actually land here visibly.
         ViewModel = App.Services.GetRequiredService<ChatViewModel>();
-        Greeting = BuildGreeting(TitleCase(Environment.UserName));
+        Greeting = GreetingProvider.BuildInitialGreeting();
 
         InitializeComponent();
         GreetingText.Text = Greeting;
@@ -53,125 +54,27 @@ public sealed partial class ChatPage : Page
         UpdateSessionLine();
     }
 
-    /// <summary>"Good morning, Amit — let's get something done" — time-of-day
-    /// prefix + the supplied name + tagline. Falls back to a generic phrase
-    /// if <paramref name="name"/> is empty.</summary>
-    private static string BuildGreeting(string name)
-    {
-        var hour = DateTime.Now.Hour;
-        var timeOfDay = hour switch
-        {
-            < 5 => "Working late",
-            < 12 => "Good morning",
-            < 17 => "Good afternoon",
-            < 21 => "Good evening",
-            _ => "Working late",
-        };
-
-        return string.IsNullOrWhiteSpace(name)
-            ? $"{timeOfDay} — let's get something done"
-            : $"{timeOfDay}, {name} — let's get something done";
-    }
-
-    private static string TitleCase(string? value)
-    {
-        if (string.IsNullOrEmpty(value)) return string.Empty;
-        // Single-pass title-case: capitalize first letter, lowercase rest.
-        // Deliberately doesn't try to split "first.last" or "FirstLast"
-        // forms — those land cleanly enough as-is for a greeting, and
-        // GetFirstNameAsync below will replace this with a real name when
-        // Windows exposes one.
-        return char.ToUpperInvariant(value[0]) + value[1..].ToLowerInvariant();
-    }
-
     /// <summary>
-    /// Looks up the user's actual first name through Windows, replacing the
-    /// synchronous username fallback. Three-layer probe with progressively
-    /// weaker guarantees:
-    ///
-    /// <list type="number">
-    /// <item><c>Windows.System.User.GetPropertyAsync(KnownUserProperties.FirstName)</c>
-    /// — works for users signed in with a Microsoft Account or set up an
-    /// account profile; returns the registered first name verbatim.</item>
-    /// <item><c>GetUserNameExW(NameDisplay)</c> — Win32 fallback for AD-joined
-    /// users; returns "First Last", we split on whitespace.</item>
-    /// <item>If both come back empty, leave the title-cased username
-    /// fallback in place (don't downgrade what's already on screen).</item>
-    /// </list>
+    /// Awaits the WinRT/Win32 first-name probe and, if a real name comes
+    /// back, hops to the UI thread to swap in the upgraded greeting. The
+    /// greeting string itself is rebuilt <em>inside</em> the dispatcher
+    /// callback so the time-of-day evaluation happens when the UI update
+    /// actually runs (matters if the probe takes long enough to cross a
+    /// boundary like 5/12/17/21 o'clock).
     /// </summary>
     private async System.Threading.Tasks.Task RefreshGreetingAsync()
     {
-        string? firstName = null;
-        try
-        {
-            // Layer 1: WinRT User API.
-            var users = await Windows.System.User.FindAllAsync(
-                Windows.System.UserType.LocalUser,
-                Windows.System.UserAuthenticationStatus.LocallyAuthenticated);
-            foreach (var u in users)
-            {
-                var value = await u.GetPropertyAsync(Windows.System.KnownUserProperties.FirstName);
-                if (value is string s && !string.IsNullOrWhiteSpace(s))
-                {
-                    firstName = s.Trim();
-                    break;
-                }
-            }
-        }
-        catch
-        {
-            // Capability denied / no users found — fall through.
-        }
-
-        if (string.IsNullOrEmpty(firstName))
-        {
-            // Layer 2: Win32 EXTENDED_NAME_FORMAT::NameDisplay.
-            firstName = TryGetFirstNameFromWin32();
-        }
-
+        var firstName = await GreetingProvider.GetFirstNameAsync();
         if (string.IsNullOrEmpty(firstName)) return;
 
-        var name = firstName!;
         DispatcherQueue.TryEnqueue(() =>
         {
-            Greeting = BuildGreeting(name);
+            Greeting = GreetingProvider.BuildGreeting(firstName);
             if (GreetingText is not null)
             {
                 GreetingText.Text = Greeting;
             }
         });
-    }
-
-    /// <summary>
-    /// Calls GetUserNameExW with NameDisplay (=3) and returns the part
-    /// before the first whitespace. Empty string on any failure — including
-    /// the very-common-on-local-accounts case where Windows has no display
-    /// name configured and the API returns false with ERROR_NONE_MAPPED.
-    /// </summary>
-    private static string TryGetFirstNameFromWin32()
-    {
-        try
-        {
-            var buffer = new System.Text.StringBuilder(256);
-            uint size = (uint)buffer.Capacity;
-            if (!NativeMethods.GetUserNameExW(NativeMethods.NameDisplay, buffer, ref size))
-            {
-                return string.Empty;
-            }
-            var display = buffer.ToString();
-            if (string.IsNullOrWhiteSpace(display)) return string.Empty;
-            // Strip any "DOMAIN\" prefix if present, then take everything
-            // before the first space. AD users often come back with a
-            // domain qualifier; MSA / local profiles don't.
-            var slash = display.IndexOf('\\');
-            if (slash >= 0) display = display[(slash + 1)..];
-            var space = display.IndexOf(' ');
-            return space > 0 ? display[..space] : display;
-        }
-        catch
-        {
-            return string.Empty;
-        }
     }
 
     /// <summary>
