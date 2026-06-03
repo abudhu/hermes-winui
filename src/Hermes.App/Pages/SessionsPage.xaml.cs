@@ -65,9 +65,9 @@ public sealed partial class SessionsPage : Page
         Subtitle.Text = "Loading…";
         try
         {
-            var list = await _api.GetSessionsAsync(50, true, CancellationToken.None);
+            var sessionsResponse = await _api.GetSessionsAsync(50, true, CancellationToken.None);
             _allRows.Clear();
-            if (list?.Data is null)
+            if (sessionsResponse?.Data is null)
             {
                 Groups.Clear();
                 Subtitle.Text = "No sessions";
@@ -75,7 +75,7 @@ public sealed partial class SessionsPage : Page
                 return;
             }
 
-            foreach (var s in list.Data)
+            foreach (var s in sessionsResponse.Data)
             {
                 _allRows.Add(SessionRowVm.FromSummary(s));
             }

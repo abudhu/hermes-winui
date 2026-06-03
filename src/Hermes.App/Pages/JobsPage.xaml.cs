@@ -35,9 +35,9 @@ public sealed partial class JobsPage : Page
         Subtitle.Text = "Loading…";
         try
         {
-            var list = await _api.GetJobsAsync(CancellationToken.None);
+            var jobsResponse = await _api.GetJobsAsync(CancellationToken.None);
             Jobs.Clear();
-            foreach (var j in list?.Jobs ?? [])
+            foreach (var j in jobsResponse?.Jobs ?? [])
             {
                 Jobs.Add(JobRowVm.FromJob(j));
             }

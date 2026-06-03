@@ -39,8 +39,8 @@ public sealed partial class BridgesPage : Page
             var health = await _api.GetDetailedHealthAsync(CancellationToken.None);
             Bridges.Clear();
 
-            var dict = health?.Platforms ?? new();
-            foreach (var kv in dict.OrderBy(kv => kv.Key))
+            var platformsByName = health?.Platforms ?? new();
+            foreach (var kv in platformsByName.OrderBy(kv => kv.Key))
             {
                 Bridges.Add(BridgeCardVm.From(kv.Key, kv.Value));
             }

@@ -36,9 +36,9 @@ public sealed partial class SkillsPage : Page
         Subtitle.Text = "Loading…";
         try
         {
-            var list = await _api.GetSkillsAsync(CancellationToken.None);
+            var skillsResponse = await _api.GetSkillsAsync(CancellationToken.None);
             Groups.Clear();
-            var skills = list?.Data ?? [];
+            var skills = skillsResponse?.Data ?? [];
             // Group "null"/empty category last under "Uncategorized" so it doesn't
             // crowd the top of the page.
             var grouped = skills
