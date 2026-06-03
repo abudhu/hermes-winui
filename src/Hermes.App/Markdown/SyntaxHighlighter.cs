@@ -190,28 +190,25 @@ public static class SyntaxHighlighter
         bool allowBacktickString = false,
         bool doubleQuoteIsString = true)
     {
-        var spans = new List<TokenSpan>();
-        var sb = new System.Text.StringBuilder();
+        var tokens = new TokenAccumulator();
         int i = 0;
 
         while (i < code.Length)
         {
             if (lineComment != null && Match(code, i, lineComment))
             {
-                FlushPlain();
                 int start = i;
                 while (i < code.Length && code[i] != '\n') i++;
-                spans.Add(new TokenSpan(code[start..i], TokenKind.Comment));
+                tokens.AddToken(code[start..i], TokenKind.Comment);
                 continue;
             }
             if (blockComment is { } bc && Match(code, i, bc.Open))
             {
-                FlushPlain();
                 int start = i;
                 i += bc.Open.Length;
                 while (i < code.Length && !Match(code, i, bc.Close)) i++;
                 if (i < code.Length) i += bc.Close.Length;
-                spans.Add(new TokenSpan(code[start..i], TokenKind.Comment));
+                tokens.AddToken(code[start..i], TokenKind.Comment);
                 continue;
             }
 
@@ -219,258 +216,197 @@ public static class SyntaxHighlighter
 
             if (doubleQuoteIsString && c == '"')
             {
-                FlushPlain();
-                spans.Add(new TokenSpan(ConsumeStringLiteral(code, ref i, '"'), TokenKind.String));
+                tokens.AddToken(ConsumeStringLiteral(code, ref i, '"'), TokenKind.String);
                 continue;
             }
             if (allowChar && c == '\'')
             {
-                FlushPlain();
-                spans.Add(new TokenSpan(ConsumeStringLiteral(code, ref i, '\''), TokenKind.String));
+                tokens.AddToken(ConsumeStringLiteral(code, ref i, '\''), TokenKind.String);
                 continue;
             }
             if ((allowTemplate || allowBacktickString) && c == '`')
             {
-                FlushPlain();
-                spans.Add(new TokenSpan(ConsumeStringLiteral(code, ref i, '`'), TokenKind.String));
+                tokens.AddToken(ConsumeStringLiteral(code, ref i, '`'), TokenKind.String);
                 continue;
             }
 
             if (char.IsDigit(c) || (c == '.' && i + 1 < code.Length && char.IsDigit(code[i + 1])))
             {
-                FlushPlain();
                 int start = i;
                 while (i < code.Length && (char.IsLetterOrDigit(code[i]) || code[i] == '.' || code[i] == '_')) i++;
-                spans.Add(new TokenSpan(code[start..i], TokenKind.Number));
+                tokens.AddToken(code[start..i], TokenKind.Number);
                 continue;
             }
 
             if (char.IsLetter(c) || c == '_' || c == '$')
             {
-                FlushPlain();
                 int start = i;
                 while (i < code.Length && (char.IsLetterOrDigit(code[i]) || code[i] == '_' || code[i] == '$')) i++;
                 var word = code[start..i];
                 if (keywords.Contains(word))
-                    spans.Add(new TokenSpan(word, TokenKind.Keyword));
+                    tokens.AddToken(word, TokenKind.Keyword);
                 else if (char.IsUpper(word[0]) && word.Length > 1)
-                    spans.Add(new TokenSpan(word, TokenKind.Type));
+                    tokens.AddToken(word, TokenKind.Type);
                 else
-                    spans.Add(new TokenSpan(word, TokenKind.Plain));
+                    tokens.AddToken(word, TokenKind.Plain);
                 continue;
             }
 
-            sb.Append(c);
+            tokens.AppendPlain(c);
             i++;
         }
 
-        FlushPlain();
-        return spans;
-
-        void FlushPlain()
-        {
-            if (sb.Length > 0)
-            {
-                spans.Add(new TokenSpan(sb.ToString(), TokenKind.Plain));
-                sb.Clear();
-            }
-        }
+        return tokens.ToSpans();
     }
 
     private static IReadOnlyList<TokenSpan> ScanPython(string code)
     {
-        var spans = new List<TokenSpan>();
-        var sb = new System.Text.StringBuilder();
+        var tokens = new TokenAccumulator();
         int i = 0;
 
         while (i < code.Length)
         {
             if (code[i] == '#')
             {
-                FlushPlain();
                 int start = i;
                 while (i < code.Length && code[i] != '\n') i++;
-                spans.Add(new TokenSpan(code[start..i], TokenKind.Comment));
+                tokens.AddToken(code[start..i], TokenKind.Comment);
                 continue;
             }
             if (Match(code, i, "\"\"\"") || Match(code, i, "'''"))
             {
-                FlushPlain();
-                var triple = code.Substring(i, 3);
+                var triple = code[i..(i + 3)];
                 int start = i;
                 i += 3;
                 while (i + 2 < code.Length && !Match(code, i, triple)) i++;
                 if (i + 2 < code.Length) i += 3;
                 else i = code.Length;
-                spans.Add(new TokenSpan(code[start..i], TokenKind.String));
+                tokens.AddToken(code[start..i], TokenKind.String);
                 continue;
             }
             if (code[i] == '"' || code[i] == '\'')
             {
-                FlushPlain();
-                spans.Add(new TokenSpan(ConsumeStringLiteral(code, ref i, code[i]), TokenKind.String));
+                tokens.AddToken(ConsumeStringLiteral(code, ref i, code[i]), TokenKind.String);
                 continue;
             }
             if (char.IsDigit(code[i]))
             {
-                FlushPlain();
                 int start = i;
                 while (i < code.Length && (char.IsLetterOrDigit(code[i]) || code[i] == '.' || code[i] == '_')) i++;
-                spans.Add(new TokenSpan(code[start..i], TokenKind.Number));
+                tokens.AddToken(code[start..i], TokenKind.Number);
                 continue;
             }
             if (char.IsLetter(code[i]) || code[i] == '_')
             {
-                FlushPlain();
                 int start = i;
                 while (i < code.Length && (char.IsLetterOrDigit(code[i]) || code[i] == '_')) i++;
                 var word = code[start..i];
                 if (PythonKeywords.Contains(word))
-                    spans.Add(new TokenSpan(word, TokenKind.Keyword));
+                    tokens.AddToken(word, TokenKind.Keyword);
                 else if (char.IsUpper(word[0]) && word.Length > 1)
-                    spans.Add(new TokenSpan(word, TokenKind.Type));
+                    tokens.AddToken(word, TokenKind.Type);
                 else
-                    spans.Add(new TokenSpan(word, TokenKind.Plain));
+                    tokens.AddToken(word, TokenKind.Plain);
                 continue;
             }
 
-            sb.Append(code[i]);
+            tokens.AppendPlain(code[i]);
             i++;
         }
 
-        FlushPlain();
-        return spans;
-
-        void FlushPlain()
-        {
-            if (sb.Length > 0)
-            {
-                spans.Add(new TokenSpan(sb.ToString(), TokenKind.Plain));
-                sb.Clear();
-            }
-        }
+        return tokens.ToSpans();
     }
 
     private static IReadOnlyList<TokenSpan> ScanBash(string code, HashSet<string> keywords)
     {
-        var spans = new List<TokenSpan>();
-        var sb = new System.Text.StringBuilder();
+        var tokens = new TokenAccumulator();
         int i = 0;
 
         while (i < code.Length)
         {
             if (code[i] == '#' && (i == 0 || char.IsWhiteSpace(code[i - 1])))
             {
-                FlushPlain();
                 int start = i;
                 while (i < code.Length && code[i] != '\n') i++;
-                spans.Add(new TokenSpan(code[start..i], TokenKind.Comment));
+                tokens.AddToken(code[start..i], TokenKind.Comment);
                 continue;
             }
             if (code[i] == '"' || code[i] == '\'')
             {
-                FlushPlain();
-                spans.Add(new TokenSpan(ConsumeStringLiteral(code, ref i, code[i]), TokenKind.String));
+                tokens.AddToken(ConsumeStringLiteral(code, ref i, code[i]), TokenKind.String);
                 continue;
             }
             if (char.IsLetter(code[i]) || code[i] == '_')
             {
-                FlushPlain();
                 int start = i;
                 while (i < code.Length && (char.IsLetterOrDigit(code[i]) || code[i] == '_' || code[i] == '-')) i++;
                 var word = code[start..i];
                 if (keywords.Contains(word))
-                    spans.Add(new TokenSpan(word, TokenKind.Keyword));
+                    tokens.AddToken(word, TokenKind.Keyword);
                 else
-                    spans.Add(new TokenSpan(word, TokenKind.Plain));
+                    tokens.AddToken(word, TokenKind.Plain);
                 continue;
             }
 
-            sb.Append(code[i]);
+            tokens.AppendPlain(code[i]);
             i++;
         }
 
-        FlushPlain();
-        return spans;
-
-        void FlushPlain()
-        {
-            if (sb.Length > 0)
-            {
-                spans.Add(new TokenSpan(sb.ToString(), TokenKind.Plain));
-                sb.Clear();
-            }
-        }
+        return tokens.ToSpans();
     }
 
     private static IReadOnlyList<TokenSpan> ScanPowerShell(string code)
     {
-        var spans = new List<TokenSpan>();
-        var sb = new System.Text.StringBuilder();
+        var tokens = new TokenAccumulator();
         int i = 0;
 
         while (i < code.Length)
         {
             if (code[i] == '#')
             {
-                FlushPlain();
                 int start = i;
                 while (i < code.Length && code[i] != '\n') i++;
-                spans.Add(new TokenSpan(code[start..i], TokenKind.Comment));
+                tokens.AddToken(code[start..i], TokenKind.Comment);
                 continue;
             }
             if (Match(code, i, "<#"))
             {
-                FlushPlain();
                 int start = i;
                 i += 2;
                 while (i < code.Length && !Match(code, i, "#>")) i++;
                 if (i < code.Length) i += 2;
-                spans.Add(new TokenSpan(code[start..i], TokenKind.Comment));
+                tokens.AddToken(code[start..i], TokenKind.Comment);
                 continue;
             }
             if (code[i] == '"' || code[i] == '\'')
             {
-                FlushPlain();
-                spans.Add(new TokenSpan(ConsumeStringLiteral(code, ref i, code[i]), TokenKind.String));
+                tokens.AddToken(ConsumeStringLiteral(code, ref i, code[i]), TokenKind.String);
                 continue;
             }
             if (char.IsDigit(code[i]))
             {
-                FlushPlain();
                 int start = i;
                 while (i < code.Length && (char.IsLetterOrDigit(code[i]) || code[i] == '.')) i++;
-                spans.Add(new TokenSpan(code[start..i], TokenKind.Number));
+                tokens.AddToken(code[start..i], TokenKind.Number);
                 continue;
             }
             if (char.IsLetter(code[i]) || code[i] == '_' || code[i] == '-' || code[i] == '$')
             {
-                FlushPlain();
                 int start = i;
                 while (i < code.Length && (char.IsLetterOrDigit(code[i]) || code[i] == '_' || code[i] == '-' || code[i] == '$')) i++;
                 var word = code[start..i];
                 if (PowerShellKeywords.Contains(word.TrimStart('-')))
-                    spans.Add(new TokenSpan(word, TokenKind.Keyword));
+                    tokens.AddToken(word, TokenKind.Keyword);
                 else
-                    spans.Add(new TokenSpan(word, TokenKind.Plain));
+                    tokens.AddToken(word, TokenKind.Plain);
                 continue;
             }
 
-            sb.Append(code[i]);
+            tokens.AppendPlain(code[i]);
             i++;
         }
 
-        FlushPlain();
-        return spans;
-
-        void FlushPlain()
-        {
-            if (sb.Length > 0)
-            {
-                spans.Add(new TokenSpan(sb.ToString(), TokenKind.Plain));
-                sb.Clear();
-            }
-        }
+        return tokens.ToSpans();
     }
 
     /// <summary>Consume an unterminated-string-safe literal starting at <paramref name="i"/>.
@@ -493,11 +429,41 @@ public static class SyntaxHighlighter
         return code[start..i];
     }
 
-    private static bool Match(string s, int start, string needle)
+    private static bool Match(string s, int start, string needle) =>
+        s.AsSpan(start).StartsWith(needle);
+
+    /// <summary>
+    /// Buffer of emitted tokens plus a pending run of plain characters.
+    /// Every scanner needs the same dance: collect non-special chars into
+    /// a StringBuilder, flush as a Plain span whenever a "real" token shows
+    /// up, then flush any trailing remainder before returning. Owning the
+    /// buffer-and-flush bookkeeping in one place keeps each scanner focused
+    /// on "what kind of token starts here?".
+    /// </summary>
+    private sealed class TokenAccumulator
     {
-        if (start + needle.Length > s.Length) return false;
-        for (int k = 0; k < needle.Length; k++)
-            if (s[start + k] != needle[k]) return false;
-        return true;
+        private readonly List<TokenSpan> _spans = new();
+        private readonly System.Text.StringBuilder _pending = new();
+
+        public void AppendPlain(char c) => _pending.Append(c);
+
+        public void AddToken(string text, TokenKind kind)
+        {
+            FlushPending();
+            _spans.Add(new TokenSpan(text, kind));
+        }
+
+        public IReadOnlyList<TokenSpan> ToSpans()
+        {
+            FlushPending();
+            return _spans;
+        }
+
+        private void FlushPending()
+        {
+            if (_pending.Length == 0) return;
+            _spans.Add(new TokenSpan(_pending.ToString(), TokenKind.Plain));
+            _pending.Clear();
+        }
     }
 }
