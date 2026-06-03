@@ -334,9 +334,8 @@
                       Grid.Row="1"
                       Padding="24,12,24,12"
                       VerticalScrollMode="Enabled"
-                      VerticalScrollBarVisibility="Auto"
-                      ViewChanged="TranscriptScroll_ViewChanged">
-            <StackPanel x:Name="TranscriptContent" SizeChanged="TranscriptContent_SizeChanged">
+                      VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="TranscriptContent">
                 <Grid x:Name="EmptyState"
                       Padding="24,32,24,24"
                       MinHeight="420"
@@ -478,8 +477,18 @@
                     </StackPanel>
                 </Grid>
 
+                <!-- VerticalCacheLength="100" effectively disables virtualization
+                     for chat-sized transcripts. With the default (2 viewports
+                     above/below), ItemsRepeater realizes/de-realizes message
+                     bubbles as the user scrolls, and each realization fires
+                     ScrollViewer scroll-anchoring that fights the wheel input —
+                     visible as a "bounce" when scrolling over tall last messages
+                     with big code blocks. For a chat transcript the working set
+                     is small enough that always-realized is the right tradeoff. -->
                 <ItemsRepeater ItemsSource="{x:Bind ViewModel.Messages, Mode=OneWay}"
-                               ItemTemplate="{StaticResource MessageSelector}">
+                               ItemTemplate="{StaticResource MessageSelector}"
+                               VerticalCacheLength="100"
+                               HorizontalCacheLength="0">
                     <ItemsRepeater.Layout>
                         <StackLayout Spacing="4" />
                     </ItemsRepeater.Layout>

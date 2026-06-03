@@ -14,13 +14,6 @@ namespace Hermes.App.Pages;
 
 public sealed partial class ChatPage : Page
 {
-    /// <summary>Pixel slack for "is the user near the bottom?". Generous so a
-    /// slight scroll-back doesn't break auto-follow.</summary>
-    private const double StickyBottomSlackPx = 48;
-
-    private bool _stickToBottom = true;
-    private bool _suppressViewChanged;
-
     /// <summary>True while we're subscribed to ViewModel events. Tracks
     /// attach/detach across OnNavigatedTo / OnNavigatedFrom so we don't
     /// double-subscribe (the VM is a DI singleton; the page is recreated
@@ -234,7 +227,28 @@ public sealed partial class ChatPage : Page
         _attached = false;
     }
 
-    private void ViewModel_MessagesChanged(object? sender, NotifyCollectionChangedEventArgs e) => UpdateSessionLine();
+    private void ViewModel_MessagesChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        UpdateSessionLine();
+
+        // One-shot scroll-to-bottom when a new message lands (either the
+        // user's prompt or the assistant's reply opening). NOT triggered by
+        // streaming content updates — those bump PropertyChanged on the
+        // existing MessageVm, not the collection. The user keeps full
+        // control of the viewport mid-stream and can scroll wherever they
+        // want without being yanked back.
+        if (e.Action == NotifyCollectionChangedAction.Add)
+        {
+            // Defer one dispatcher tick so the new bubble is measured and
+            // included in ScrollableHeight before we snap.
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                TranscriptScroll.ChangeView(
+                    null, TranscriptScroll.ScrollableHeight, null,
+                    disableAnimation: true);
+            });
+        }
+    }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -325,36 +339,6 @@ public sealed partial class ChatPage : Page
         {
             // Clipboard contention happens occasionally; the user can just retry.
         }
-    }
-
-    /// <summary>
-    /// Tracks whether the user is "near the bottom" so we can keep auto-scrolling
-    /// when assistant tokens stream in, but stop fighting them if they scrolled
-    /// up to read history.
-    /// </summary>
-    private void TranscriptScroll_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
-    {
-        if (_suppressViewChanged) return;
-        var sv = TranscriptScroll;
-        var nearBottom = sv.VerticalOffset + sv.ViewportHeight >= sv.ScrollableHeight - StickyBottomSlackPx;
-        _stickToBottom = nearBottom;
-    }
-
-    /// <summary>
-    /// Content size grew (new message, more tokens, expander toggled). If the
-    /// user was already near the bottom, snap back to it.
-    /// </summary>
-    private void TranscriptContent_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        if (!_stickToBottom) return;
-        var sv = TranscriptScroll;
-        // Defer one tick so the layout pass settles before we measure ScrollableHeight.
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            _suppressViewChanged = true;
-            sv.ChangeView(null, sv.ScrollableHeight, null, disableAnimation: true);
-            _suppressViewChanged = false;
-        });
     }
 }
 
