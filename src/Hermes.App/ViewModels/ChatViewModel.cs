@@ -552,10 +552,12 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     /// imply equal content.</summary>
     private static void FlushBufferOnce(MessageVm msg)
     {
+        // string != string already short-circuits on reference equality
+        // before doing value compare, so no need to hand-roll ReferenceEquals.
         var buf = msg.Buffer.ToString();
-        if (!ReferenceEquals(buf, msg.Content) && buf != msg.Content) msg.Content = buf;
+        if (buf != msg.Content) msg.Content = buf;
         var rbuf = msg.ReasoningBuffer.ToString();
-        if (!ReferenceEquals(rbuf, msg.Reasoning) && rbuf != msg.Reasoning) msg.Reasoning = rbuf;
+        if (rbuf != msg.Reasoning) msg.Reasoning = rbuf;
     }
 
     /// <summary>Final synchronous flush against an explicit message — called
