@@ -96,6 +96,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         {
             Role = MessageRole.Assistant,
             State = MessageState.Streaming,
+            ThinkingLabel = ThinkingLabels.Pick(),
         };
         Messages.Add(assistant);
         _currentAssistant = assistant;

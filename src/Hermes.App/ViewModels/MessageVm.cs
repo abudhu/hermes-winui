@@ -29,6 +29,15 @@ public sealed partial class MessageVm : ObservableObject
     /// <summary>Timestamp captured locally when the message was created.</summary>
     public DateTimeOffset Timestamp { get; } = DateTimeOffset.Now;
 
+    /// <summary>
+    /// Playful spinner label shown while this message is streaming
+    /// (e.g. "( ͡° ͜ʖ ͡°) cogitating…"). Picked once per turn from the same
+    /// verb/face pool as the Hermes CLI's KawaiiSpinner so the UI matches
+    /// the terminal client's vibe. Set by <see cref="ChatViewModel"/> when
+    /// the message is created; never changes mid-stream.
+    /// </summary>
+    public string ThinkingLabel { get; init; } = "Thinking…";
+
     [ObservableProperty]
     public partial string Content { get; set; } = string.Empty;
 

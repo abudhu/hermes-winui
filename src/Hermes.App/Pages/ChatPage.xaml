@@ -145,7 +145,7 @@
                         <StackPanel Orientation="Horizontal" Spacing="6"
                                     Visibility="{x:Bind app:Converters.BoolToVisible(IsStreaming), Mode=OneWay}">
                             <ProgressRing Width="12" Height="12" IsActive="True" />
-                            <TextBlock Text="…thinking"
+                            <TextBlock Text="{x:Bind ThinkingLabel}"
                                        Style="{StaticResource CaptionTextBlockStyle}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                        VerticalAlignment="Center" />
