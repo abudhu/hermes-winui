@@ -17,8 +17,17 @@ public sealed partial class ChatPage : Page
     /// <summary>Pixel slack for "is the user near the bottom?". Generous so a slight scroll-back doesn't break auto-follow.</summary>
     private const double StickyBottomSlackPx = 48;
 
+    /// <summary>How recently the user must have interacted (wheel, key, pointer)
+    /// for a ViewChanged event to be treated as authoritative. ViewChanged also
+    /// fires when content-layout changes clamp the scroll offset under us (e.g.
+    /// MarkdownPresenter rebuilding during streaming) — without this gate, those
+    /// layout-driven events would falsely re-stick the user to the bottom on
+    /// every render tick.</summary>
+    private const int UserInteractionGracePeriodMs = 1000;
+
     private bool _stickToBottom = true;
     private bool _suppressViewChanged;
+    private DateTimeOffset _lastUserInteractionAt = DateTimeOffset.MinValue;
 
     /// <summary>True while we're subscribed to ViewModel events. Tracks
     /// attach/detach across OnNavigatedTo / OnNavigatedFrom so we don't
@@ -37,6 +46,24 @@ public sealed partial class ChatPage : Page
         ViewModel = App.Services.GetRequiredService<ChatViewModel>();
 
         InitializeComponent();
+
+        // handledEventsToo: true is required because the message bubbles
+        // contain RichTextBlocks (and previously CodeBlockControl had a
+        // nested horizontal ScrollViewer) that mark wheel events as handled
+        // before they reach the outer transcript ScrollViewer. We still
+        // want to know the user wheeled so we can correctly unstick.
+        TranscriptScroll.AddHandler(
+            UIElement.PointerWheelChangedEvent,
+            new PointerEventHandler(OnTranscriptPointerWheel),
+            handledEventsToo: true);
+        TranscriptScroll.AddHandler(
+            UIElement.PointerPressedEvent,
+            new PointerEventHandler(OnTranscriptPointerPressed),
+            handledEventsToo: true);
+        TranscriptScroll.AddHandler(
+            UIElement.KeyDownEvent,
+            new KeyEventHandler(OnTranscriptKeyDown),
+            handledEventsToo: true);
 
         // First-render hookup. We also attach on OnNavigatedTo, but on the
         // very first construction OnNavigatedTo and the ctor both fire — the
@@ -147,13 +174,70 @@ public sealed partial class ChatPage : Page
     /// Tracks whether the user is "near the bottom" so we can keep auto-scrolling
     /// when assistant tokens stream in, but stop fighting them if they scrolled up
     /// to read history.
+    ///
+    /// <para>Important: this handler only updates <see cref="_stickToBottom"/>
+    /// when a real user interaction (wheel, key, pointer) happened recently.
+    /// Otherwise this fires from content-layout changes (e.g.
+    /// <see cref="Controls.MarkdownPresenter"/> rebuilding its children on
+    /// every streaming tick) which clamp the scroll offset and would
+    /// otherwise be misread as "user is at the bottom".</para>
     /// </summary>
     private void TranscriptScroll_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
         if (_suppressViewChanged) return;
+        var sinceInteractionMs = (DateTimeOffset.UtcNow - _lastUserInteractionAt).TotalMilliseconds;
+        if (sinceInteractionMs > UserInteractionGracePeriodMs) return;
+
         var sv = TranscriptScroll;
         var nearBottom = sv.VerticalOffset + sv.ViewportHeight >= sv.ScrollableHeight - StickyBottomSlackPx;
         _stickToBottom = nearBottom;
+    }
+
+    /// <summary>
+    /// Mouse wheel on the transcript. <see cref="UIElement.AddHandler"/> with
+    /// <c>handledEventsToo: true</c> is required so we still see the event
+    /// when a child (RichTextBlock, etc.) marked it handled.
+    /// </summary>
+    private void OnTranscriptPointerWheel(object sender, PointerRoutedEventArgs e)
+    {
+        _lastUserInteractionAt = DateTimeOffset.UtcNow;
+        var delta = e.GetCurrentPoint(TranscriptScroll).Properties.MouseWheelDelta;
+        if (delta > 0)
+        {
+            // User wheeled up — stop chasing the bottom.
+            _stickToBottom = false;
+        }
+        // Wheel down is handled implicitly: the subsequent ViewChanged with
+        // our grace-period gate will re-stick when the user reaches the
+        // bottom slack.
+    }
+
+    /// <summary>Pointer pressed inside the transcript (scrollbar thumb drag,
+    /// touch pan start, mouse click). Counts as a user interaction so the
+    /// ViewChanged handler is allowed to update stickiness.</summary>
+    private void OnTranscriptPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        _lastUserInteractionAt = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>Keyboard nav inside the transcript (Page Up/Down, arrows, Home/End).
+    /// Up-direction keys unstick immediately; Down keys defer to ViewChanged.</summary>
+    private void OnTranscriptKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case VirtualKey.PageUp:
+            case VirtualKey.Up:
+            case VirtualKey.Home:
+                _lastUserInteractionAt = DateTimeOffset.UtcNow;
+                _stickToBottom = false;
+                break;
+            case VirtualKey.PageDown:
+            case VirtualKey.Down:
+            case VirtualKey.End:
+                _lastUserInteractionAt = DateTimeOffset.UtcNow;
+                break;
+        }
     }
 
     /// <summary>

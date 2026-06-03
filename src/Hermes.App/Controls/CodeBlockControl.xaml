@@ -46,20 +46,15 @@
                 </Button>
             </Grid>
 
-            <ScrollViewer Grid.Row="1"
-                          HorizontalScrollBarVisibility="Auto"
-                          HorizontalScrollMode="Auto"
-                          VerticalScrollBarVisibility="Disabled"
-                          VerticalScrollMode="Disabled"
-                          Padding="10,2,10,8">
-                <RichTextBlock x:Name="CodeBody"
-                               IsTextSelectionEnabled="True"
-                               FontFamily="Consolas, 'Cascadia Mono', 'Segoe UI Mono', monospace"
-                               FontSize="13"
-                               LineHeight="18"
-                               Foreground="{ThemeResource HermesCodePlainBrush}"
-                               TextWrapping="NoWrap" />
-            </ScrollViewer>
+            <RichTextBlock x:Name="CodeBody"
+                           Grid.Row="1"
+                           IsTextSelectionEnabled="True"
+                           FontFamily="Consolas, 'Cascadia Mono', 'Segoe UI Mono', monospace"
+                           FontSize="13"
+                           LineHeight="18"
+                           Foreground="{ThemeResource HermesCodePlainBrush}"
+                           TextWrapping="Wrap"
+                           Padding="10,2,10,8" />
         </Grid>
     </Border>
 </UserControl>
