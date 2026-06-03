@@ -67,8 +67,42 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    private bool _suppressNavGuard;
+
+    private async void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
+        if (_suppressNavGuard) return;
+
+        // Dirty-state guard: if we're leaving Settings with unsaved changes
+        // in either pane, prompt before discarding. WinUI 3 NavView has no
+        // pre-change Cancel hook, so we restore the selection ourselves
+        // when the user backs out.
+        if (NavFrame.Content is SettingsPage settings && settings.HasUnsavedChanges)
+        {
+            var leavingSettings = args.IsSettingsSelected
+                ? false  // staying on Settings — no prompt
+                : true;
+            if (leavingSettings)
+            {
+                var prevSelection = sender.SelectedItem;
+                var keepEditing = await PromptDiscardSettingsAsync();
+                if (keepEditing)
+                {
+                    // Restore selection without re-triggering the guard.
+                    _suppressNavGuard = true;
+                    try
+                    {
+                        sender.SelectedItem = sender.SettingsItem;
+                    }
+                    finally
+                    {
+                        _suppressNavGuard = false;
+                    }
+                    return;
+                }
+            }
+        }
+
         if (args.IsSettingsSelected)
         {
             Navigate(typeof(SettingsPage), args.RecommendedNavigationTransitionInfo);
@@ -92,6 +126,24 @@ public sealed partial class MainWindow : Window
         };
 
         Navigate(target, args.RecommendedNavigationTransitionInfo);
+    }
+
+    /// <summary>Returns true if the user chose to stay on the Settings
+    /// page (discarding the navigation), false if they chose to discard
+    /// their unsaved edits and proceed.</summary>
+    private async System.Threading.Tasks.Task<bool> PromptDiscardSettingsAsync()
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Discard unsaved settings?",
+            Content = "You have unsaved changes on the Settings page. Leaving will discard them.",
+            PrimaryButtonText = "Discard changes",
+            CloseButtonText = "Keep editing",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = NavView.XamlRoot,
+        };
+        var result = await dialog.ShowAsync();
+        return result != ContentDialogResult.Primary;  // Primary = discard
     }
 
     private void Navigate(Type pageType, NavigationTransitionInfo transition)
