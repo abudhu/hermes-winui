@@ -8,9 +8,11 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Hermes.ApiClient;
+using Hermes.ApiClient.Models;
 using Hermes.App.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
@@ -48,11 +50,27 @@ public sealed partial class SettingsPage : Page
 
     private enum StatusKind { Loading, Connected, Degraded, Unreachable }
 
+    // ---- Diagnostics pane state -------------------------------------------
+    //
+    // Diagnostics loads lazily — the first navigation to the pane (or
+    // an explicit Refresh click) triggers LoadDiagnosticsAsync. The
+    // _loading flag prevents concurrent refreshes (button + nav race);
+    // the _loaded flag stops re-navigation from re-probing every time.
+
+    private bool _diagnosticsLoaded;
+    private bool _diagnosticsLoading;
+
+    /// <summary>Platform bridges list backing the
+    /// <c>PlatformBridges</c> ItemsRepeater in the Diagnostics pane.
+    /// One entry per platform key from <c>/health/detailed.platforms</c>.</summary>
+    public ObservableCollection<PlatformBridgeVm> PlatformBridgesList { get; } = [];
+
     public SettingsPage()
     {
         _api = App.Services.GetRequiredService<HermesApiClient>();
         InitializeComponent();
 
+        PlatformBridges.ItemsSource = PlatformBridgesList;
         LoadInitialValues();
         VersionText.Text = $"v{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?"}";
     }
@@ -87,30 +105,10 @@ public sealed partial class SettingsPage : Page
     {
         base.OnNavigatedTo(e);
 
-        // Fire status probe and capabilities load in parallel.
-        var statusTask = RefreshConnectionStatusAsync();
-
-        try
-        {
-            var caps = await _api.GetCapabilitiesAsync(CancellationToken.None);
-            Features.Clear();
-            if (caps?.Features is null)
-            {
-                CapsStatus.Text = "No capabilities returned by the gateway.";
-                return;
-            }
-            foreach (var kv in caps.Features.OrderBy(kv => kv.Key))
-            {
-                Features.Add(FeatureFlagVm.From(kv.Key, kv.Value));
-            }
-            CapsStatus.Text = $"{Features.Count(f => f.IsEnabled)} of {Features.Count} features enabled on the gateway.";
-        }
-        catch (Exception ex)
-        {
-            CapsStatus.Text = $"Could not load capabilities: {ex.Message}";
-        }
-
-        await statusTask;
+        // Connection-status probe is cheap and always relevant.
+        // Capabilities + gateway probe live in Diagnostics and load
+        // lazily when the user navigates there (see NavRail_SelectionChanged).
+        await RefreshConnectionStatusAsync();
     }
 
     // ---- connection status --------------------------------------------------
@@ -282,12 +280,19 @@ public sealed partial class SettingsPage : Page
         // First-load guard — the ListView may fire selection events before
         // x:Bind has wired up the panes (when IsSelected="True" on the
         // default item).
-        if (ConnectionPane is null || McpPaneHost is null || AboutPane is null) return;
+        if (ConnectionPane is null || McpPaneHost is null
+            || DiagnosticsPane is null || AboutPane is null) return;
 
         var selected = NavRail.SelectedItem;
-        ConnectionPane.Visibility = ReferenceEquals(selected, ConnectionNavItem) ? Visibility.Visible : Visibility.Collapsed;
-        McpPaneHost.Visibility    = ReferenceEquals(selected, McpNavItem)        ? Visibility.Visible : Visibility.Collapsed;
-        AboutPane.Visibility      = ReferenceEquals(selected, AboutNavItem)      ? Visibility.Visible : Visibility.Collapsed;
+        ConnectionPane.Visibility  = ReferenceEquals(selected, ConnectionNavItem)  ? Visibility.Visible : Visibility.Collapsed;
+        McpPaneHost.Visibility     = ReferenceEquals(selected, McpNavItem)         ? Visibility.Visible : Visibility.Collapsed;
+        DiagnosticsPane.Visibility = ReferenceEquals(selected, DiagnosticsNavItem) ? Visibility.Visible : Visibility.Collapsed;
+        AboutPane.Visibility       = ReferenceEquals(selected, AboutNavItem)       ? Visibility.Visible : Visibility.Collapsed;
+
+        if (ReferenceEquals(selected, DiagnosticsNavItem) && !_diagnosticsLoaded)
+        {
+            _ = LoadDiagnosticsAsync();
+        }
     }
 
     /// <summary>True if EITHER the gateway form OR the MCP editor has
@@ -486,5 +491,371 @@ public sealed partial class SettingsPage : Page
         SaveStatusBar.Title = title;
         SaveStatusBar.Message = message;
         SaveStatusBar.IsOpen = true;
+    }
+
+    // ---- Diagnostics pane --------------------------------------------------
+    //
+    // Three independent data sources: gateway.pid file probe (PID +
+    // kind + argv + start time approximation), /health/detailed
+    // (state + active agents + platform bridges + exit reason), and
+    // /capabilities (feature matrix). Each is wrapped in its own
+    // try/catch so a single failure surfaces inline without nuking
+    // the whole pane — important precisely when one of them is broken.
+
+    private void RefreshDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        // Force-reload on explicit refresh, even if previously loaded.
+        _diagnosticsLoaded = false;
+        _ = LoadDiagnosticsAsync();
+    }
+
+    private async Task LoadDiagnosticsAsync()
+    {
+        if (_diagnosticsLoading) return;
+        _diagnosticsLoading = true;
+        DiagnosticsRefreshButton.IsEnabled = false;
+        try
+        {
+            // Log path — synchronous + cheap, do it first so the row
+            // populates even if everything else times out.
+            UpdateLogPathLabel();
+
+            // Probe everything in parallel. Per-source error handling
+            // keeps a single failure from clobbering the others.
+            var probeTask = Task.Run(() => HermesGatewayProbe.Probe(_api.Config.ConfigDirectory));
+            var healthTask = TryFetchAsync(_api.GetDetailedHealthAsync);
+            var capsTask = TryFetchAsync(ct => _api.GetCapabilitiesAsync(ct));
+
+            HermesGatewayInfo? probe = null;
+            try { probe = await probeTask; }
+            catch (Exception ex) { ShowDiagStatus(InfoBarSeverity.Warning, "PID file unreadable", ex.Message); }
+
+            var healthResult = await healthTask;
+            var capsResult = await capsTask;
+
+            ApplyGatewayInfo(probe, healthResult.Value);
+            ApplyPlatformBridges(healthResult.Value);
+            ApplyCapabilities(capsResult);
+
+            // If any source errored, surface a friendly summary —
+            // detail is already visible in the per-section labels.
+            var errors = new List<string>();
+            if (healthResult.Error is not null) errors.Add($"/health/detailed: {healthResult.Error}");
+            if (capsResult.Error is not null) errors.Add($"/capabilities: {capsResult.Error}");
+            if (errors.Count > 0)
+            {
+                ShowDiagStatus(InfoBarSeverity.Warning,
+                    "Some diagnostics unavailable",
+                    string.Join(Environment.NewLine, errors));
+            }
+            else
+            {
+                DiagnosticsStatusBar.IsOpen = false;
+            }
+
+            _diagnosticsLoaded = true;
+        }
+        finally
+        {
+            _diagnosticsLoading = false;
+            DiagnosticsRefreshButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>Wraps an async fetch into a result-style tuple so the
+    /// caller can apply each source independently. Avoids
+    /// <c>Task.WhenAll</c>'s "one throw discards the rest" behaviour.</summary>
+    private static async Task<(T? Value, string? Error)> TryFetchAsync<T>(
+        Func<CancellationToken, Task<T?>> fetch)
+        where T : class
+    {
+        try
+        {
+            var v = await fetch(CancellationToken.None);
+            return (v, null);
+        }
+        catch (Exception ex)
+        {
+            return (null, ex.Message);
+        }
+    }
+
+    private void ApplyGatewayInfo(HermesGatewayInfo? probe, DetailedHealth? health)
+    {
+        // State
+        if (health is not null)
+        {
+            GatewayStateText.Text = string.IsNullOrWhiteSpace(health.GatewayState)
+                ? (health.Status ?? "unknown")
+                : health.GatewayState;
+        }
+        else if (probe is not null)
+        {
+            GatewayStateText.Text = "(unable to reach /health/detailed; PID file present)";
+        }
+        else
+        {
+            GatewayStateText.Text = "not running";
+        }
+
+        // PID — prefer the one from the live health endpoint over the
+        // one in gateway.pid; they should agree, but the live one is
+        // more authoritative if Hermes restarted without rewriting the file.
+        var pid = health?.Pid ?? probe?.Pid;
+        GatewayPidText.Text = pid?.ToString() ?? "—";
+
+        // Kind / argv come from gateway.pid only.
+        GatewayKindText.Text = string.IsNullOrEmpty(probe?.Kind) ? "—" : probe.Kind;
+
+        // Uptime: prefer Process.GetProcessById(pid).StartTime when the
+        // PID is alive and the process kind looks right; fall back to
+        // gateway.pid file mtime; show "unknown" if neither works.
+        GatewayUptimeText.Text = ComputeUptime(pid, _api.Config.ConfigDirectory);
+
+        GatewayActiveAgentsText.Text = health?.ActiveAgents.ToString() ?? "—";
+        GatewayUpdatedText.Text = string.IsNullOrEmpty(health?.UpdatedAt) ? "—" : health.UpdatedAt!;
+
+        if (!string.IsNullOrWhiteSpace(health?.ExitReason))
+        {
+            GatewayExitReasonLabel.Visibility = Visibility.Visible;
+            GatewayExitReasonText.Visibility = Visibility.Visible;
+            GatewayExitReasonText.Text = health.ExitReason!;
+        }
+        else
+        {
+            GatewayExitReasonLabel.Visibility = Visibility.Collapsed;
+            GatewayExitReasonText.Visibility = Visibility.Collapsed;
+            GatewayExitReasonText.Text = "";
+        }
+    }
+
+    private void ApplyPlatformBridges(DetailedHealth? health)
+    {
+        PlatformBridgesList.Clear();
+        if (health?.Platforms is null || health.Platforms.Count == 0)
+        {
+            PlatformBridgesCard.Visibility = Visibility.Collapsed;
+            return;
+        }
+        foreach (var kv in health.Platforms.OrderBy(kv => kv.Key))
+        {
+            PlatformBridgesList.Add(PlatformBridgeVm.From(
+                kv.Key, kv.Value.State, kv.Value.ErrorCode, kv.Value.ErrorMessage));
+        }
+        PlatformBridgesCard.Visibility = Visibility.Visible;
+    }
+
+    private void ApplyCapabilities((Hermes.ApiClient.Models.Capabilities? Value, string? Error) result)
+    {
+        Features.Clear();
+        if (result.Error is not null)
+        {
+            CapsStatus.Text = $"Could not load capabilities: {result.Error}";
+            return;
+        }
+        var caps = result.Value;
+        if (caps?.Features is null)
+        {
+            CapsStatus.Text = "No capabilities returned by the gateway.";
+            return;
+        }
+        foreach (var kv in caps.Features.OrderBy(kv => kv.Key))
+        {
+            Features.Add(FeatureFlagVm.From(kv.Key, kv.Value));
+        }
+        CapsStatus.Text = $"{Features.Count(f => f.IsEnabled)} of {Features.Count} features enabled on the gateway.";
+    }
+
+    /// <summary>Best-effort gateway uptime. Tries the live process
+    /// first (most accurate), then the gateway.pid file mtime, then
+    /// gives up.</summary>
+    private static string ComputeUptime(int? pid, string? configDir)
+    {
+        if (pid is int p && p > 0)
+        {
+            try
+            {
+                using var proc = Process.GetProcessById(p);
+                // StartTime is local-time; Now is also local — both DateTime, same kind.
+                var dur = DateTime.Now - proc.StartTime;
+                if (dur.TotalSeconds >= 0)
+                    return FormatDuration(dur);
+            }
+            catch
+            {
+                // Process gone, no perms, mismatched arch — fall through.
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(configDir))
+        {
+            try
+            {
+                var path = Path.Combine(configDir, HermesGatewayProbe.PidFileName);
+                if (File.Exists(path))
+                {
+                    var dur = DateTime.Now - File.GetLastWriteTime(path);
+                    if (dur.TotalSeconds >= 0)
+                        return $"≈ {FormatDuration(dur)} (from pid-file mtime)";
+                }
+            }
+            catch
+            {
+                // Permissions error / I/O race — same fall-through.
+            }
+        }
+
+        return "unknown";
+    }
+
+    private static string FormatDuration(TimeSpan dur)
+    {
+        if (dur.TotalDays >= 1) return $"{(int)dur.TotalDays}d {dur.Hours}h";
+        if (dur.TotalHours >= 1) return $"{(int)dur.TotalHours}h {dur.Minutes}m";
+        if (dur.TotalMinutes >= 1) return $"{(int)dur.TotalMinutes}m {dur.Seconds}s";
+        return $"{(int)dur.TotalSeconds}s";
+    }
+
+    private void UpdateLogPathLabel()
+    {
+        var cfg = _api.Config.ConfigDirectory;
+        if (string.IsNullOrWhiteSpace(cfg))
+        {
+            LogDirText.Text = "(config directory not found)";
+            return;
+        }
+        var logsPath = Path.Combine(cfg, "logs");
+        // Show the logs path even when missing — clicking Open will
+        // gracefully fall back to the config directory.
+        LogDirText.Text = logsPath;
+    }
+
+    private void OpenLogs_Click(object sender, RoutedEventArgs e)
+    {
+        var cfg = _api.Config.ConfigDirectory;
+        if (string.IsNullOrWhiteSpace(cfg))
+        {
+            ShowDiagStatus(InfoBarSeverity.Warning, "No config directory",
+                "Hermes config directory wasn't discovered, so there's nowhere to open. " +
+                "Set HERMES_HOME or install Hermes to %LOCALAPPDATA%\\hermes.");
+            return;
+        }
+
+        var logsPath = Path.Combine(cfg, "logs");
+        string toOpen;
+        if (Directory.Exists(logsPath)) toOpen = logsPath;
+        else if (Directory.Exists(cfg)) toOpen = cfg;
+        else
+        {
+            ShowDiagStatus(InfoBarSeverity.Warning, "Directory missing",
+                $"Neither '{logsPath}' nor '{cfg}' exists on disk. Hermes may not have been started yet.");
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = toOpen,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            ShowDiagStatus(InfoBarSeverity.Error, "Couldn't open folder", ex.Message);
+        }
+    }
+
+    private void CopyDebugInfo_Click(object sender, RoutedEventArgs e)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"**Hermes WinUI debug info** — {DateTime.Now:yyyy-MM-ddTHH:mm:ssK}");
+        sb.AppendLine();
+        sb.AppendLine($"App: v{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?"}");
+        sb.AppendLine($"OS: {Environment.OSVersion} ({(Environment.Is64BitOperatingSystem ? "x64" : "x86")})");
+        sb.AppendLine($"Config dir: {RedactPath(_api.Config.ConfigDirectory)}");
+        sb.AppendLine();
+        sb.AppendLine("Gateway:");
+        sb.AppendLine($"- State: {GatewayStateText.Text}");
+        sb.AppendLine($"- PID: {GatewayPidText.Text}");
+        sb.AppendLine($"- Kind: {GatewayKindText.Text}");
+        sb.AppendLine($"- Uptime: {GatewayUptimeText.Text}");
+        sb.AppendLine($"- Active agents: {GatewayActiveAgentsText.Text}");
+        sb.AppendLine($"- Last updated: {GatewayUpdatedText.Text}");
+        if (GatewayExitReasonText.Visibility == Visibility.Visible
+            && !string.IsNullOrWhiteSpace(GatewayExitReasonText.Text))
+        {
+            sb.AppendLine($"- Exit reason: {GatewayExitReasonText.Text}");
+        }
+        // Intentionally NOT including argv from gateway.pid — it can
+        // contain --api-key, bearer tokens in URLs, custom config
+        // paths, and other things people don't realise they're
+        // pasting into a GitHub issue.
+        sb.AppendLine();
+        sb.AppendLine("Connection:");
+        sb.AppendLine($"- Host: {_api.Config.Host}");
+        sb.AppendLine($"- Port: {_api.Config.Port}");
+        sb.AppendLine($"- Model: {_api.Config.ModelName}");
+        sb.AppendLine($"- API key set: {(string.IsNullOrEmpty(_api.Config.ApiKey) ? "no" : "yes (not shown)")}");
+        sb.AppendLine();
+        if (PlatformBridgesList.Count > 0)
+        {
+            sb.AppendLine("Platform bridges:");
+            foreach (var b in PlatformBridgesList)
+            {
+                sb.AppendLine($"- {b.Name}: {b.StateDescription}");
+            }
+            sb.AppendLine();
+        }
+        if (Features.Count > 0)
+        {
+            var enabled = Features.Count(f => f.IsEnabled);
+            sb.AppendLine($"Capabilities ({enabled}/{Features.Count}):");
+            foreach (var f in Features)
+            {
+                sb.AppendLine($"- {(f.IsEnabled ? "✓" : "✗")} {f.Name}");
+            }
+        }
+        else
+        {
+            sb.AppendLine("Capabilities: not loaded (open Diagnostics first, then copy again).");
+        }
+
+        try
+        {
+            var pkg = new DataPackage();
+            pkg.SetText(sb.ToString());
+            Clipboard.SetContent(pkg);
+            ShowDiagStatus(InfoBarSeverity.Success, "Debug info copied",
+                "Paste into a GitHub issue or chat to share with a maintainer.");
+        }
+        catch (Exception ex)
+        {
+            ShowDiagStatus(InfoBarSeverity.Error, "Couldn't copy",
+                $"Clipboard wasn't writable: {ex.Message}");
+        }
+    }
+
+    /// <summary>Rewrites user-specific path prefixes to their environment
+    /// variable form so copied debug info doesn't leak the username
+    /// (or other personal path bits) into a public issue.</summary>
+    private static string RedactPath(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return "(not set)";
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrEmpty(local) && path.StartsWith(local, StringComparison.OrdinalIgnoreCase))
+            return "%LOCALAPPDATA%" + path[local.Length..];
+        if (!string.IsNullOrEmpty(profile) && path.StartsWith(profile, StringComparison.OrdinalIgnoreCase))
+            return "%USERPROFILE%" + path[profile.Length..];
+        return path;
+    }
+
+    private void ShowDiagStatus(InfoBarSeverity severity, string title, string message)
+    {
+        DiagnosticsStatusBar.Severity = severity;
+        DiagnosticsStatusBar.Title = title;
+        DiagnosticsStatusBar.Message = message;
+        DiagnosticsStatusBar.IsOpen = true;
     }
 }
