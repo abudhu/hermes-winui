@@ -614,6 +614,7 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <Button x:Name="RemoveButton"
                             Grid.Column="0"
@@ -624,8 +625,24 @@
                             <TextBlock Text="Remove" />
                         </StackPanel>
                     </Button>
-                    <Button x:Name="RestartHermesButton"
+                    <!--
+                      Test connection runs a minimal MCP initialize
+                      handshake against the in-form server config (parsed
+                      from BodyBox), reporting the result in the editor
+                      InfoBar. Disabled while one is in flight; cancelled
+                      automatically when the user switches selection.
+                    -->
+                    <Button x:Name="TestButton"
                             Grid.Column="2"
+                            Click="TestConnection_Click"
+                            ToolTipService.ToolTip="Run a minimal MCP initialize handshake against the current server config.">
+                        <StackPanel x:Name="TestButtonContent" Orientation="Horizontal" Spacing="6">
+                            <FontIcon x:Name="TestButtonIcon" Glyph="&#xE9D5;" FontSize="14" />
+                            <TextBlock x:Name="TestButtonText" Text="Test connection" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="RestartHermesButton"
+                            Grid.Column="3"
                             Click="RestartHermes_Click"
                             ToolTipService.ToolTip="Show the command to restart the Hermes gateway so it picks up your MCP changes.">
                         <StackPanel Orientation="Horizontal" Spacing="6">
@@ -634,12 +651,12 @@
                         </StackPanel>
                     </Button>
                     <Button x:Name="RevertButton"
-                            Grid.Column="3"
+                            Grid.Column="4"
                             Click="Revert_Click"
                             IsEnabled="False"
                             Content="Revert" />
                     <Button x:Name="SaveButton"
-                            Grid.Column="4"
+                            Grid.Column="5"
                             Click="Save_Click"
                             IsEnabled="False"
                             Style="{StaticResource AccentButtonStyle}">
