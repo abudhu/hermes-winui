@@ -81,6 +81,51 @@
 
                     <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="Connection" />
 
+                    <!--
+                      Live connection status. Probes /health/detailed against
+                      the persisted config (the singleton HermesApiClient
+                      bound at app startup). After Save, the indicator keeps
+                      showing the old config's status because the running
+                      HttpClients still hold the old BaseAddress / bearer —
+                      the post-save InfoBar already tells the user to restart.
+                    -->
+                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="16,12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Ellipse x:Name="StatusDot"
+                                     Grid.Column="0"
+                                     Width="10"
+                                     Height="10"
+                                     VerticalAlignment="Center"
+                                     Fill="{ThemeResource TextFillColorDisabledBrush}" />
+                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                <TextBlock x:Name="StatusText"
+                                           Style="{StaticResource BodyStrongTextBlockStyle}"
+                                           Text="Probing gateway…" />
+                                <TextBlock x:Name="StatusDetail"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap"
+                                           Visibility="Collapsed"
+                                           Text="" />
+                            </StackPanel>
+                            <Button x:Name="StatusRefreshButton"
+                                    Grid.Column="2"
+                                    Click="ProbeStatus_Click"
+                                    ToolTipService.ToolTip="Refresh status">
+                                <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                            </Button>
+                        </Grid>
+                    </Border>
+
                 <!-- Gateway -->
                 <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
@@ -180,32 +225,7 @@
                                        Text="—" />
                         </Grid>
 
-                        <!-- Config directory (still read-only; we don't move .env) -->
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="180" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Config directory"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       VerticalAlignment="Center" />
-                            <TextBlock x:Name="ConfigDirText" Grid.Column="1"
-                                       FontFamily="Consolas"
-                                       IsTextSelectionEnabled="True"
-                                       TextWrapping="Wrap"
-                                       VerticalAlignment="Center"
-                                       Text="—" />
-                            <Button Grid.Column="2"
-                                    Click="OpenConfig_Click">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <FontIcon Glyph="&#xE838;" FontSize="14" />
-                                    <TextBlock Text="Open" />
-                                </StackPanel>
-                            </Button>
-                        </Grid>
-
-                        <!-- Save/Revert + status InfoBar -->
+                        <!-- Save/Revert/Test + status InfoBar -->
                         <InfoBar x:Name="SaveStatusBar"
                                  IsOpen="False"
                                  IsClosable="True"
@@ -215,6 +235,7 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="DirtyHint"
                                        Grid.Column="0"
@@ -222,13 +243,29 @@
                                        Style="{StaticResource CaptionTextBlockStyle}"
                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                        Text="" />
-                            <Button x:Name="RevertButton"
+                            <!--
+                              Test connection uses the CURRENT form values
+                              (not the persisted ones), so you can validate
+                              changes before saving. Always enabled — even
+                              when the form isn't dirty, "did my saved
+                              config actually work?" is a valid question.
+                            -->
+                            <Button x:Name="TestButton"
                                     Grid.Column="1"
+                                    Click="Test_Click"
+                                    ToolTipService.ToolTip="Ping the gateway using the values in the form (without saving)">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE9D9;" FontSize="14" />
+                                    <TextBlock Text="Test connection" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="RevertButton"
+                                    Grid.Column="2"
                                     Click="Revert_Click"
                                     IsEnabled="False"
                                     Content="Revert" />
                             <Button x:Name="SaveButton"
-                                    Grid.Column="2"
+                                    Grid.Column="3"
                                     Click="Save_Click"
                                     IsEnabled="False"
                                     Style="{StaticResource AccentButtonStyle}">
@@ -240,6 +277,43 @@
                         </Grid>
                     </StackPanel>
                 </Border>
+
+                <!--
+                  Config directory tucked into a collapsed Expander —
+                  reference info, not something users adjust. The
+                  ConfigDirText element keeps its name so code-behind
+                  doesn't have to change.
+                -->
+                <Expander HorizontalAlignment="Stretch">
+                    <Expander.Header>
+                        <TextBlock Text="Where files live"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    </Expander.Header>
+                    <Grid ColumnSpacing="16" Padding="0,4,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Spacing="4">
+                            <TextBlock Text="Config directory"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock x:Name="ConfigDirText"
+                                       FontFamily="Consolas"
+                                       IsTextSelectionEnabled="True"
+                                       TextWrapping="Wrap"
+                                       Text="—" />
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                Click="OpenConfig_Click"
+                                VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE838;" FontSize="14" />
+                                <TextBlock Text="Open" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </Expander>
 
                 <!-- Capabilities feature matrix -->
                 <StackPanel Spacing="10">
