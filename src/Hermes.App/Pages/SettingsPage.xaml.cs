@@ -100,16 +100,17 @@ public sealed partial class SettingsPage : Page
 
     // ---- section selector ---------------------------------------------------
 
-    private void SectionSelector_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    private void NavRail_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        // SelectorBar fires this before XAML init has wired the panes the
-        // very first time (when IsSelected="True" on the default item),
-        // so guard against null.
-        if (GatewayPane is null || McpPane is null) return;
+        // First-load guard — the ListView may fire selection events before
+        // x:Bind has wired up the panes (when IsSelected="True" on the
+        // default item).
+        if (ConnectionPane is null || McpPaneHost is null || AboutPane is null) return;
 
-        var showMcp = ReferenceEquals(sender.SelectedItem, McpTab);
-        GatewayPane.Visibility = showMcp ? Visibility.Collapsed : Visibility.Visible;
-        McpPane.Visibility = showMcp ? Visibility.Visible : Visibility.Collapsed;
+        var selected = NavRail.SelectedItem;
+        ConnectionPane.Visibility = ReferenceEquals(selected, ConnectionNavItem) ? Visibility.Visible : Visibility.Collapsed;
+        McpPaneHost.Visibility    = ReferenceEquals(selected, McpNavItem)        ? Visibility.Visible : Visibility.Collapsed;
+        AboutPane.Visibility      = ReferenceEquals(selected, AboutNavItem)      ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>True if EITHER the gateway form OR the MCP editor has

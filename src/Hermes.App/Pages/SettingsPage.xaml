@@ -10,20 +10,76 @@
     xmlns:settings="using:Hermes.App.Pages.Settings"
     mc:Ignorable="d">
 
-    <ScrollViewer Padding="32,24,32,32" VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="980" Spacing="20" HorizontalAlignment="Stretch">
+    <!--
+      Settings shell. Left-side nav rail (~200px) switches between three
+      content panes. Drives Visibility on the panes from NavRail_SelectionChanged
+      so we don't pay the cost of three sub-pages just for a settings split.
+      Section names exposed in the rail are the user-visible labels — code
+      keeps the historical names (GatewayPane, McpPane, etc.) so the
+      navigation-guard contract (SettingsPage.HasUnsavedChanges) and the
+      Save/Revert flow don't have to move.
+    -->
+    <Grid Padding="32,24,32,32">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="200" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
-            <TextBlock Style="{StaticResource TitleLargeTextBlockStyle}" Text="Settings" />
+        <!-- Left nav rail -->
+        <ListView x:Name="NavRail"
+                  Grid.Column="0"
+                  SelectionMode="Single"
+                  SelectionChanged="NavRail_SelectionChanged"
+                  Background="Transparent"
+                  Margin="0,0,16,0">
+            <ListViewItem x:Name="ConnectionNavItem" IsSelected="True">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Grid.Column="0" Glyph="&#xE839;" FontSize="16" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="Connection" VerticalAlignment="Center" />
+                </Grid>
+            </ListViewItem>
+            <ListViewItem x:Name="McpNavItem">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Grid.Column="0" Glyph="&#xE74C;" FontSize="16" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="MCP servers" VerticalAlignment="Center" />
+                </Grid>
+            </ListViewItem>
+            <ListViewItem x:Name="AboutNavItem">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Grid.Column="0" Glyph="&#xE946;" FontSize="16" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="About" VerticalAlignment="Center" />
+                </Grid>
+            </ListViewItem>
+        </ListView>
 
-            <!-- Section selector -->
-            <SelectorBar x:Name="SectionSelector"
-                         SelectionChanged="SectionSelector_SelectionChanged">
-                <SelectorBarItem x:Name="GatewayTab" Text="Gateway" IsSelected="True" />
-                <SelectorBarItem x:Name="McpTab" Text="MCP servers" />
-            </SelectorBar>
+        <!-- Content area: panes overlay each other and toggle Visibility. -->
+        <Grid Grid.Column="1">
 
-            <!-- Gateway pane -->
-            <StackPanel x:Name="GatewayPane" Spacing="20">
+            <!-- Connection pane (formerly "Gateway") -->
+            <ScrollViewer x:Name="ConnectionPane"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="GatewayPane"
+                            MaxWidth="780"
+                            HorizontalAlignment="Stretch"
+                            Spacing="20">
+
+                    <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="Connection" />
 
                 <!-- Gateway -->
                 <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -227,34 +283,52 @@
                         </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
                 </StackPanel>
-            </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
 
-            <!-- MCP pane -->
-            <settings:McpServersView x:Name="McpPane" Visibility="Collapsed" />
+            <!-- MCP pane host. Don't wrap McpServersView in a ScrollViewer —
+                 the control owns its own *-row sizing and internal scrolling. -->
+            <Grid x:Name="McpPaneHost" Visibility="Collapsed" RowSpacing="16">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0"
+                           Style="{StaticResource SubtitleTextBlockStyle}"
+                           Text="MCP servers" />
+                <settings:McpServersView x:Name="McpPane" Grid.Row="1" />
+            </Grid>
 
-            <!-- About (always visible, below the selector) -->
-            <StackPanel Spacing="10">
-                <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="About" />
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1"
-                        CornerRadius="8"
-                        Padding="20,16">
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Hermes WinUI companion"
-                                   Style="{StaticResource BodyStrongTextBlockStyle}" />
-                        <TextBlock Text="A Windows-native dashboard, chat, and session explorer for the local Hermes agent."
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap" />
-                        <TextBlock x:Name="VersionText"
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                   FontFamily="Consolas" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
+            <!-- About pane -->
+            <ScrollViewer x:Name="AboutPane"
+                          Visibility="Collapsed"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel MaxWidth="780"
+                            HorizontalAlignment="Stretch"
+                            Spacing="16">
+                    <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="About" />
+                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="20,16">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Hermes WinUI companion"
+                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="A Windows-native dashboard, chat, and session explorer for the local Hermes agent."
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="VersionText"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                       FontFamily="Consolas" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
 
-        </StackPanel>
-    </ScrollViewer>
+        </Grid>
+    </Grid>
 </Page>
