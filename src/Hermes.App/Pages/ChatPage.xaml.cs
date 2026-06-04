@@ -55,9 +55,26 @@ public sealed partial class ChatPage : Page
 
         // Ctrl+/ → focus composer. The VirtualKey enum doesn't expose
         // Oem2 (the slash key, VK 0xBF=191) so we can't wire this from
-        // XAML; the accelerator is built here at runtime instead. Same
+        // XAML; the accelerators are built here at runtime instead. Same
         // wiring covers the numpad Divide key. Page-scoped — only fires
         // while ChatPage is the loaded content.
+        //
+        // IMPORTANT: must defer to Loaded. Calling KeyboardAccelerators.Add
+        // from the page ctor — before the page is hosted in a Frame and
+        // therefore before it has a XamlRoot — crashes WinUI 3 with a
+        // stowed combase exception (HRESULT 0x802b000a, FACILITY_XAML) at
+        // app startup with no managed stack. We learned this the hard way
+        // (see commit history); do not move these back into the ctor.
+        Loaded += ChatPage_AttachAccelerators;
+    }
+
+    private bool _acceleratorsAttached;
+
+    private void ChatPage_AttachAccelerators(object sender, RoutedEventArgs e)
+    {
+        if (_acceleratorsAttached) return;
+        _acceleratorsAttached = true;
+
         var slashAccel = new KeyboardAccelerator
         {
             Key = (VirtualKey)0xBF,  // VK_OEM_2 — the `/?` key on US layouts
