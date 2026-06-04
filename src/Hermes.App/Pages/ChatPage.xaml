@@ -459,7 +459,8 @@
                       Grid.Row="1"
                       Padding="24,12,24,12"
                       VerticalScrollMode="Enabled"
-                      VerticalScrollBarVisibility="Auto">
+                      VerticalScrollBarVisibility="Auto"
+                      SizeChanged="TranscriptScroll_SizeChanged">
             <StackPanel x:Name="TranscriptContent">
                 <Grid x:Name="EmptyState"
                       Padding="24,32,24,24"
@@ -610,7 +611,8 @@
                      visible as a "bounce" when scrolling over tall last messages
                      with big code blocks. For a chat transcript the working set
                      is small enough that always-realized is the right tradeoff. -->
-                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Messages, Mode=OneWay}"
+                <ItemsRepeater x:Name="MessagesRepeater"
+                               ItemsSource="{x:Bind ViewModel.Messages, Mode=OneWay}"
                                ItemTemplate="{StaticResource MessageSelector}"
                                VerticalCacheLength="100"
                                HorizontalCacheLength="0">
@@ -618,6 +620,18 @@
                         <StackLayout Spacing="4" />
                     </ItemsRepeater.Layout>
                 </ItemsRepeater>
+
+                <!-- Tall bottom spacer (resized in code-behind to track the
+                     ScrollViewer's ViewportHeight). Gives the "scroll latest
+                     user message to top of viewport" logic enough scroll-room
+                     to actually reach the top even when the assistant has
+                     only emitted a tiny "thinking" placeholder. Same pattern
+                     as ChatGPT / Claude — yes you see empty space at the
+                     bottom at rest, that's the cost of having your prompt
+                     stay pinned at the top while the assistant streams. -->
+                <Border x:Name="BottomSpacer"
+                        Height="200"
+                        Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.HasMessages), Mode=OneWay}" />
             </StackPanel>
         </ScrollViewer>
 

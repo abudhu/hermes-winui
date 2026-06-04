@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Linq;
 using Hermes.App.Pages.Chat;
 using Hermes.App.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,6 +21,16 @@ public sealed partial class ChatPage : Page
     /// double-subscribe (the VM is a DI singleton; the page is recreated
     /// on every navigation and would otherwise pile on handlers).</summary>
     private bool _attached;
+
+    /// <summary>Monotonically incremented every time a scroll-on-Add is
+    /// scheduled. Each scheduled callback captures the value at the time
+    /// it was queued and bails if a later one has superseded it. This
+    /// coalesces the back-to-back User+Assistant Adds of a send flow
+    /// into a single executed scroll — without this, BringIntoView fires
+    /// twice and the first call (before layout settles) snaps to a
+    /// slightly-off position which then jumps when the second call
+    /// corrects it. Visible as a small flicker.</summary>
+    private int _scrollSeq;
 
     public ChatViewModel ViewModel { get; }
 
@@ -178,23 +189,79 @@ public sealed partial class ChatPage : Page
     {
         UpdateSessionLine();
 
-        // One-shot scroll-to-bottom when a new message lands (either the
-        // user's prompt or the assistant's reply opening). NOT triggered by
-        // streaming content updates — those bump PropertyChanged on the
-        // existing MessageVm, not the collection. The user keeps full
-        // control of the viewport mid-stream and can scroll wherever they
-        // want without being yanked back.
-        if (e.Action == NotifyCollectionChangedAction.Add)
+        // We care about two flavors of Add:
+        //
+        //   1. Send flow — two Adds land back-to-back: the User message
+        //      and the Assistant placeholder (State == Streaming).
+        //      We want to pin the User's message to the TOP of the
+        //      viewport so the user can read both their prompt AND
+        //      watch the assistant stream in underneath. This is the
+        //      ChatGPT / Claude pattern and it's more robust than
+        //      snap-to-bottom because the bottom target moves out from
+        //      under us as the assistant grows.
+        //
+        //   2. Anything else (resume hydration, lone system messages,
+        //      etc.) — snap to bottom so the most recent content is
+        //      visible. Acceptable to fire N times during hydration:
+        //      each ChangeView is cheap and the last one wins.
+        //
+        // Both branches use a Low-priority dispatcher hop so layout
+        // can settle (especially the user bubble's MarkdownPresenter
+        // measure pass) before we ask for positions — otherwise the
+        // user's bubble height is still the placeholder size and the
+        // scroll lands a hundred-odd pixels short of where we want.
+        //
+        // NOT triggered by streaming content updates — those bump
+        // PropertyChanged on the existing MessageVm, not the
+        // collection. The user keeps full control of the viewport
+        // mid-stream and can scroll wherever they want without being
+        // yanked back.
+        if (e.Action != NotifyCollectionChangedAction.Add) return;
+
+        // Bump the sequence so any in-flight callback from a prior Add
+        // (e.g. the User Add of a User+Assistant send pair) no-ops out
+        // and only the latest one actually scrolls.
+        var seq = ++_scrollSeq;
+
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
-            // Defer one dispatcher tick so the new bubble is measured and
-            // included in ScrollableHeight before we snap.
-            DispatcherQueue.TryEnqueue(() =>
+            if (seq != _scrollSeq) return; // superseded by a later Add
+
+            var msgs = ViewModel.Messages;
+            if (msgs.Count == 0) return;
+
+            // Late-check the send-flow pattern: by the time this
+            // callback runs both Adds have landed, so msgs[last] is
+            // the assistant placeholder and msgs[last-1] is the user
+            // message.
+            if (msgs.Count >= 2)
             {
-                TranscriptScroll.ChangeView(
-                    null, TranscriptScroll.ScrollableHeight, null,
-                    disableAnimation: true);
-            });
-        }
+                var last = msgs[msgs.Count - 1];
+                var prev = msgs[msgs.Count - 2];
+                if (last.Role == MessageRole.Assistant
+                    && last.State == MessageState.Streaming
+                    && prev.Role == MessageRole.User)
+                {
+                    var userElement = MessagesRepeater
+                        .TryGetElement(msgs.Count - 2) as FrameworkElement;
+                    userElement?.StartBringIntoView(new BringIntoViewOptions
+                    {
+                        AnimationDesired = false,
+                        VerticalAlignmentRatio = 0,
+                        // Tiny breathing room so the user bubble's
+                        // role/timestamp header isn't flush with the
+                        // ScrollViewer's top padding.
+                        VerticalOffset = -8,
+                    });
+                    return;
+                }
+            }
+
+            // Default: snap to bottom.
+            TranscriptScroll.ChangeView(
+                null, TranscriptScroll.ScrollableHeight, null,
+                disableAnimation: true);
+        });
     }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -203,6 +270,29 @@ public sealed partial class ChatPage : Page
             e.PropertyName == nameof(ChatViewModel.SessionTitle))
         {
             UpdateSessionLine();
+        }
+    }
+
+    /// <summary>
+    /// Keep the BottomSpacer sized to roughly the viewport so the "scroll
+    /// latest user message to top of viewport" logic in
+    /// <see cref="ViewModel_MessagesChanged"/> always has enough scroll-room
+    /// to land cleanly at the top. Without this spacer, a fresh assistant
+    /// placeholder (~30 px "thinking" label) doesn't add enough content to
+    /// make the target offset reachable, and the user's message ends up
+    /// somewhere in the middle of the viewport instead of pinned to the top.
+    /// </summary>
+    private void TranscriptScroll_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (BottomSpacer is null) return;
+        var vh = TranscriptScroll.ViewportHeight;
+        // Subtract a small breathing margin so there's always a bit of
+        // empty space below the last message rather than the latest bubble
+        // sitting flush with the bottom of the spacer area.
+        var target = Math.Max(200, vh - 80);
+        if (Math.Abs(BottomSpacer.Height - target) > 0.5)
+        {
+            BottomSpacer.Height = target;
         }
     }
 
