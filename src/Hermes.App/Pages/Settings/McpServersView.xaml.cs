@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Hermes.ApiClient;
@@ -50,11 +51,29 @@ public sealed partial class McpServersView : UserControl
     private string _originalName = "";
     private string _originalBody = "";
 
-    /// <summary>True while we're mutating the boxes programmatically
-    /// (selection change, revert, post-save resync, toggle⇄body sync)
-    /// so the various *_Changed and *_Toggled handlers don't false-
-    /// positive dirty or trigger feedback loops.</summary>
-    private bool _suppressDirty;
+    /// <summary>True while we're populating the editor wholesale —
+    /// selection change, "new server", template pick, revert,
+    /// post-save resync, or a toggle-driven rewrite. Every change
+    /// handler early-returns when this is set, because the load path
+    /// re-syncs everything (parse state, toggle, form, buttons)
+    /// explicitly at the end. Lets us avoid the worst dirty/feedback
+    /// loops without sprinkling guard flags everywhere.</summary>
+    private bool _loadingEditor;
+
+    /// <summary>True while <see cref="SyncFormFromBody"/> is writing
+    /// the structured form fields. Form *_Changed handlers check this
+    /// so they don't immediately push the just-read value back into
+    /// the body (which would then re-trigger SyncFormFromBody, ad
+    /// infinitum). Independent of <see cref="_syncingBodyFromForm"/>
+    /// so the two sync paths can't shadow each other.</summary>
+    private bool _syncingFormFromBody;
+
+    /// <summary>True while <see cref="RenderBodyFromForm"/> is writing
+    /// <see cref="BodyBox"/>. <see cref="Body_Changed"/> still updates
+    /// dirty state and parse state, but skips the form-resync step so
+    /// the form values the user is actively typing aren't clobbered
+    /// by a round-trip through JSON.</summary>
+    private bool _syncingBodyFromForm;
 
     /// <summary>Tracks whether <see cref="BodyBox"/>'s current text
     /// parses as a JSON object. The editor Enabled toggle disables
@@ -62,6 +81,33 @@ public sealed partial class McpServersView : UserControl
     /// as a field rather than recomputed on demand because the
     /// Toggled handler needs to short-circuit fast.</summary>
     private bool _bodyIsValidJsonObject = true;
+
+    /// <summary>True when the body's managed keys all have shapes
+    /// the structured form can safely round-trip. When false the
+    /// form controls disable and a banner explains why; raw JSON
+    /// editing still works. Recomputed every
+    /// <see cref="SyncFormFromBody"/>.</summary>
+    private bool _isBodyFormCompatible = true;
+
+    /// <summary>Args list backing the stdio "Args" repeater. Each
+    /// entry is one positional arg string.</summary>
+    public ObservableCollection<EditableStringVm> Args { get; } = [];
+
+    /// <summary>Env vars backing the stdio "Env" repeater. Key=name,
+    /// Value=raw string value (we don't redact or interpret).</summary>
+    public ObservableCollection<EditableKeyValueVm> Env { get; } = [];
+
+    /// <summary>HTTP headers backing the http "Headers" repeater.
+    /// Key=header name, Value=raw header value.</summary>
+    public ObservableCollection<EditableKeyValueVm> Headers { get; } = [];
+
+    /// <summary>Managed keys the structured form owns. Everything
+    /// else in the body (enabled, auth, sampling, tools, etc.) is
+    /// preserved verbatim across <see cref="RenderBodyFromForm"/>.</summary>
+    private static readonly HashSet<string> ManagedKeys = new(StringComparer.Ordinal)
+    {
+        "command", "args", "env", "url", "headers", "timeout",
+    };
 
     // ---- Row-toggle gating (bound from the DataTemplate) -------------------
 
@@ -104,6 +150,9 @@ public sealed partial class McpServersView : UserControl
         InitializeComponent();
         _hermesConfig = App.Services.GetRequiredService<HermesConfig>();
         ServerList.ItemsSource = Servers;
+        ArgsRepeater.ItemsSource = Args;
+        EnvRepeater.ItemsSource = Env;
+        HeadersRepeater.ItemsSource = Headers;
         Loaded += OnLoaded;
     }
 
@@ -216,7 +265,7 @@ public sealed partial class McpServersView : UserControl
         _selected = vm;
         EditorTitle.Text = $"Edit server '{vm.Name}'";
 
-        _suppressDirty = true;
+        _loadingEditor = true;
         try
         {
             NameBox.Text = vm.Name;
@@ -225,19 +274,48 @@ public sealed partial class McpServersView : UserControl
             _originalBody = BodyBox.Text;
             RefreshBodyParseState();
             SyncEditorToggleFromBody();
+            SyncFormFromBody();
         }
         finally
         {
-            _suppressDirty = false;
+            _loadingEditor = false;
         }
         UpdateButtons();
         EditorStatusBar.IsOpen = false;
     }
 
-    private void NewServer_Click(object sender, RoutedEventArgs e)
+    private void AddEmpty_Click(object sender, RoutedEventArgs e)
     {
         ServerList.SelectedItem = null;
         ShowNewServerForm();
+    }
+
+    private void AddTemplate_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuFlyoutItem mfi || mfi.Tag is not string tag) return;
+        var (name, body) = GetTemplate(tag);
+        ServerList.SelectedItem = null;
+        _selected = null;
+        EditorTitle.Text = "New server";
+
+        _loadingEditor = true;
+        try
+        {
+            NameBox.Text = name;
+            BodyBox.Text = body;
+            // Templates start dirty so the user can save immediately.
+            _originalName = "";
+            _originalBody = "";
+            RefreshBodyParseState();
+            SyncEditorToggleFromBody();
+            SyncFormFromBody();
+        }
+        finally
+        {
+            _loadingEditor = false;
+        }
+        UpdateButtons();
+        EditorStatusBar.IsOpen = false;
     }
 
     private void ShowNewServerForm()
@@ -245,24 +323,29 @@ public sealed partial class McpServersView : UserControl
         _selected = null;
         EditorTitle.Text = "New server";
 
-        _suppressDirty = true;
+        _loadingEditor = true;
         try
         {
             NameBox.Text = "";
+            // Minimal stdio scaffold so the form opens populated with
+            // empty Command + empty Args list ready for the user to
+            // fill in. Anyone who wants a working starter picks a
+            // template from the dropdown.
             BodyBox.Text = """
                 {
-                  "command": "uvx",
-                  "args": ["mcp-server-time"]
+                  "command": "",
+                  "args": []
                 }
                 """;
             _originalName = "";
             _originalBody = "";
             RefreshBodyParseState();
             SyncEditorToggleFromBody();
+            SyncFormFromBody();
         }
         finally
         {
-            _suppressDirty = false;
+            _loadingEditor = false;
         }
         UpdateButtons();
         EditorStatusBar.IsOpen = false;
@@ -270,19 +353,28 @@ public sealed partial class McpServersView : UserControl
 
     private void Editor_Changed(object sender, object e)
     {
-        if (_suppressDirty) return;
+        if (_loadingEditor) return;
         UpdateButtons();
     }
 
     /// <summary>BodyBox text-changed handler. Splits off from
     /// <see cref="Editor_Changed"/> because edits to the JSON body have
-    /// the extra side effect of re-syncing the Enabled toggle (and
-    /// disabling it when the body becomes invalid JSON).</summary>
+    /// the extra side effect of re-syncing the Enabled toggle and the
+    /// structured form (and disabling the toggle when the body becomes
+    /// invalid JSON).</summary>
     private void Body_Changed(object sender, object e)
     {
-        if (_suppressDirty) return;
+        if (_loadingEditor) return;
         RefreshBodyParseState();
         SyncEditorToggleFromBody();
+        if (!_syncingBodyFromForm)
+        {
+            // Body changed by direct user edit (or by the enabled
+            // toggle's rewrite) — re-derive the form from it. Skipped
+            // when the form itself is what triggered the body write,
+            // to avoid clobbering the user's in-flight typing.
+            SyncFormFromBody();
+        }
         UpdateButtons();
     }
 
@@ -322,17 +414,18 @@ public sealed partial class McpServersView : UserControl
 
     private void Revert_Click(object sender, RoutedEventArgs e)
     {
-        _suppressDirty = true;
+        _loadingEditor = true;
         try
         {
             NameBox.Text = _originalName;
             BodyBox.Text = _originalBody;
             RefreshBodyParseState();
             SyncEditorToggleFromBody();
+            SyncFormFromBody();
         }
         finally
         {
-            _suppressDirty = false;
+            _loadingEditor = false;
         }
         UpdateButtons();
         EditorStatusBar.IsOpen = false;
@@ -538,7 +631,7 @@ public sealed partial class McpServersView : UserControl
             }
 
             var newIsOn = TryReadEnabled(body) ?? true;
-            _suppressDirty = true;
+            _loadingEditor = true;
             try
             {
                 EditorEnabledToggle.IsEnabled = true;
@@ -546,7 +639,7 @@ public sealed partial class McpServersView : UserControl
             }
             finally
             {
-                _suppressDirty = false;
+                _loadingEditor = false;
             }
             EditorEnabledHint.Text = "";
         }
@@ -562,7 +655,7 @@ public sealed partial class McpServersView : UserControl
 
     private void EditorEnabled_Toggled(object sender, RoutedEventArgs e)
     {
-        if (_suppressDirty) return;
+        if (_loadingEditor) return;
         if (sender is not ToggleSwitch ts) return;
         if (!_bodyIsValidJsonObject)
         {
@@ -573,15 +666,18 @@ public sealed partial class McpServersView : UserControl
 
         var newJsonText = SerializeObject(SetOrRemoveEnabled(body, ts.IsOn));
 
-        _suppressDirty = true;
+        _loadingEditor = true;
         try
         {
             BodyBox.Text = newJsonText;
             RefreshBodyParseState();
+            // Body just changed — pull the form along so the user
+            // sees the same JSON shape they'd see if they typed it.
+            SyncFormFromBody();
         }
         finally
         {
-            _suppressDirty = false;
+            _loadingEditor = false;
         }
         // Toggle flips count as a body edit — fire the normal dirty path.
         UpdateButtons();
@@ -607,7 +703,7 @@ public sealed partial class McpServersView : UserControl
 
     private async void RowEnabled_Toggled(object sender, RoutedEventArgs e)
     {
-        if (_suppressDirty) return;
+        if (_loadingEditor) return;
         if (sender is not ToggleSwitch ts) return;
         if (ts.DataContext is not McpServerItemVm vm) return;
 
@@ -617,9 +713,9 @@ public sealed partial class McpServersView : UserControl
         // partial state with stale editor edits hanging around.
         if (IsEditorDirty)
         {
-            _suppressDirty = true;
+            _loadingEditor = true;
             try { ts.IsOn = vm.IsEnabled; }
-            finally { _suppressDirty = false; }
+            finally { _loadingEditor = false; }
             ShowEditorStatus(InfoBarSeverity.Warning, "Save your edits first",
                 "Save or revert the open server before toggling other rows.");
             return;
@@ -631,9 +727,9 @@ public sealed partial class McpServersView : UserControl
                 "Config wasn't loaded successfully — restart the app or check that " +
                 $"'{_hermesConfig.ConfigYamlPath}' is readable.");
             // Revert the visual flip so we don't lie about state.
-            _suppressDirty = true;
+            _loadingEditor = true;
             try { ts.IsOn = vm.IsEnabled; }
-            finally { _suppressDirty = false; }
+            finally { _loadingEditor = false; }
             return;
         }
 
@@ -665,9 +761,9 @@ public sealed partial class McpServersView : UserControl
         else
         {
             // Save rejected — flip the toggle back so it matches reality.
-            _suppressDirty = true;
+            _loadingEditor = true;
             try { ts.IsOn = vm.IsEnabled; }
-            finally { _suppressDirty = false; }
+            finally { _loadingEditor = false; }
         }
 
         // Avoid the unused parameter warning while keeping the async
@@ -883,4 +979,496 @@ public sealed partial class McpServersView : UserControl
             Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         });
     }
+
+    // ---- Structured form ⇄ raw JSON sync ----------------------------------
+    //
+    // BodyBox is the canonical source of truth (save/validation/dirty
+    // tracking all read from it). The structured form is a secondary
+    // editor that pushes its values back into BodyBox whenever the user
+    // edits a field, and pulls values out of BodyBox whenever the body
+    // is mutated by anything else (direct typing, enabled toggle,
+    // load/revert, template pick). Three flags keep the round-trip
+    // from looping: _loadingEditor (whole-editor populate),
+    // _syncingFormFromBody (form is being written from body), and
+    // _syncingBodyFromForm (body is being written from form).
+
+    /// <summary>Populate the structured form fields from
+    /// <see cref="BodyBox"/>'s current text. Disables the form and
+    /// shows a banner when the body uses field shapes the form can't
+    /// safely round-trip (e.g. numeric args, nested objects in env).</summary>
+    private void SyncFormFromBody()
+    {
+        _syncingFormFromBody = true;
+        try
+        {
+            if (!TryParseObject(BodyBox.Text, out var body))
+            {
+                _isBodyFormCompatible = false;
+                ShowFormCompatBanner("Body isn't valid JSON.");
+                SetFormControlsEnabled(false);
+                return;
+            }
+
+            var (compat, reason) = CheckFormCompat(body);
+            _isBodyFormCompatible = compat;
+            if (!compat)
+            {
+                ShowFormCompatBanner(reason);
+                SetFormControlsEnabled(false);
+                return;
+            }
+            HideFormCompatBanner();
+            SetFormControlsEnabled(true);
+
+            // Transport: URL takes precedence — if both are absent we
+            // default to stdio because that's the dominant MCP shape.
+            var hasUrl = body.TryGetProperty("url", out _);
+            if (hasUrl)
+            {
+                TransportHttp.IsChecked = true;
+            }
+            else
+            {
+                TransportStdio.IsChecked = true;
+            }
+            ApplyTransportVisibility();
+
+            CommandBox.Text = body.TryGetProperty("command", out var cmd)
+                              && cmd.ValueKind == JsonValueKind.String
+                ? cmd.GetString() ?? ""
+                : "";
+
+            Args.Clear();
+            if (body.TryGetProperty("args", out var args)
+                && args.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var a in args.EnumerateArray())
+                {
+                    Args.Add(new EditableStringVm(a.GetString() ?? ""));
+                }
+            }
+
+            Env.Clear();
+            if (body.TryGetProperty("env", out var env)
+                && env.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var p in env.EnumerateObject())
+                {
+                    Env.Add(new EditableKeyValueVm(p.Name, p.Value.GetString() ?? ""));
+                }
+            }
+
+            UrlBox.Text = body.TryGetProperty("url", out var url)
+                          && url.ValueKind == JsonValueKind.String
+                ? url.GetString() ?? ""
+                : "";
+
+            Headers.Clear();
+            if (body.TryGetProperty("headers", out var headers)
+                && headers.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var p in headers.EnumerateObject())
+                {
+                    Headers.Add(new EditableKeyValueVm(p.Name, p.Value.GetString() ?? ""));
+                }
+            }
+
+            if (body.TryGetProperty("timeout", out var t)
+                && t.ValueKind == JsonValueKind.Number
+                && t.TryGetDouble(out var tv))
+            {
+                TimeoutBox.Value = tv;
+            }
+            else
+            {
+                // NumberBox treats NaN as "no value" and shows the
+                // placeholder.
+                TimeoutBox.Value = double.NaN;
+            }
+        }
+        finally
+        {
+            _syncingFormFromBody = false;
+        }
+    }
+
+    /// <summary>Render the structured form back into
+    /// <see cref="BodyBox"/>. Preserves any keys outside
+    /// <see cref="ManagedKeys"/> verbatim (enabled, auth, sampling,
+    /// tools, supports_parallel_tool_calls, connect_timeout, etc.).
+    /// Skipped when the form is incompatible — the user can only
+    /// edit raw JSON in that case so there's nothing to render.</summary>
+    private void RenderBodyFromForm()
+    {
+        if (!_isBodyFormCompatible) return;
+
+        var isStdio = TransportStdio.IsChecked == true;
+
+        using var ms = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(ms, new JsonWriterOptions
+        {
+            Indented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        }))
+        {
+            writer.WriteStartObject();
+
+            if (isStdio)
+            {
+                if (!string.IsNullOrEmpty(CommandBox.Text))
+                {
+                    writer.WriteString("command", CommandBox.Text);
+                }
+                if (Args.Count > 0)
+                {
+                    writer.WriteStartArray("args");
+                    foreach (var a in Args)
+                    {
+                        writer.WriteStringValue(a.Value ?? "");
+                    }
+                    writer.WriteEndArray();
+                }
+                if (Env.Count > 0)
+                {
+                    writer.WriteStartObject("env");
+                    foreach (var kv in Env)
+                    {
+                        // Skip blank-keyed rows so the user can leave a
+                        // half-edited row around without it leaking into
+                        // the rendered body.
+                        if (!string.IsNullOrEmpty(kv.Key))
+                        {
+                            writer.WriteString(kv.Key, kv.Value ?? "");
+                        }
+                    }
+                    writer.WriteEndObject();
+                }
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(UrlBox.Text))
+                {
+                    writer.WriteString("url", UrlBox.Text);
+                }
+                if (Headers.Count > 0)
+                {
+                    writer.WriteStartObject("headers");
+                    foreach (var kv in Headers)
+                    {
+                        if (!string.IsNullOrEmpty(kv.Key))
+                        {
+                            writer.WriteString(kv.Key, kv.Value ?? "");
+                        }
+                    }
+                    writer.WriteEndObject();
+                }
+            }
+
+            var t = TimeoutBox.Value;
+            if (!double.IsNaN(t))
+            {
+                if (t == Math.Floor(t) && t >= long.MinValue && t <= long.MaxValue)
+                {
+                    writer.WriteNumber("timeout", (long)t);
+                }
+                else
+                {
+                    writer.WriteNumber("timeout", t);
+                }
+            }
+
+            // Pass through any keys the form doesn't manage so the
+            // Enabled toggle, gateway tool routing, and any
+            // hand-edited extras don't get clobbered by a form edit.
+            if (TryParseObject(BodyBox.Text, out var existing))
+            {
+                foreach (var p in existing.EnumerateObject())
+                {
+                    if (!ManagedKeys.Contains(p.Name))
+                    {
+                        p.WriteTo(writer);
+                    }
+                }
+            }
+
+            writer.WriteEndObject();
+        }
+
+        var json = Encoding.UTF8.GetString(ms.ToArray());
+
+        _syncingBodyFromForm = true;
+        try
+        {
+            BodyBox.Text = json;
+            RefreshBodyParseState();
+            // Body just changed — the enabled toggle reads from it, so
+            // keep that in sync too. SyncFormFromBody is skipped via
+            // _syncingBodyFromForm so we don't blow away the user's
+            // in-flight typing.
+            SyncEditorToggleFromBody();
+        }
+        finally
+        {
+            _syncingBodyFromForm = false;
+        }
+        UpdateButtons();
+    }
+
+    /// <summary>Returns (true, "") if every managed key in
+    /// <paramref name="body"/> has a shape the form can edit
+    /// losslessly. Returns (false, reason) otherwise.</summary>
+    private static (bool compat, string reason) CheckFormCompat(JsonElement body)
+    {
+        if (body.ValueKind != JsonValueKind.Object)
+            return (false, "Body must be a JSON object.");
+
+        var hasCommand = body.TryGetProperty("command", out var cmd);
+        var hasUrl = body.TryGetProperty("url", out var url);
+
+        if (hasCommand && hasUrl)
+            return (false, "Both 'command' and 'url' are set; the form edits only one transport at a time.");
+        if (hasCommand && cmd.ValueKind != JsonValueKind.String)
+            return (false, "'command' isn't a string.");
+        if (hasUrl && url.ValueKind != JsonValueKind.String)
+            return (false, "'url' isn't a string.");
+
+        if (body.TryGetProperty("args", out var args))
+        {
+            if (args.ValueKind != JsonValueKind.Array)
+                return (false, "'args' isn't an array.");
+            foreach (var a in args.EnumerateArray())
+            {
+                if (a.ValueKind != JsonValueKind.String)
+                    return (false, "'args' contains a non-string value.");
+            }
+        }
+
+        if (body.TryGetProperty("env", out var env))
+        {
+            if (env.ValueKind != JsonValueKind.Object)
+                return (false, "'env' isn't an object.");
+            foreach (var p in env.EnumerateObject())
+            {
+                if (p.Value.ValueKind != JsonValueKind.String)
+                    return (false, $"'env.{p.Name}' isn't a string.");
+            }
+        }
+
+        if (body.TryGetProperty("headers", out var headers))
+        {
+            if (headers.ValueKind != JsonValueKind.Object)
+                return (false, "'headers' isn't an object.");
+            foreach (var p in headers.EnumerateObject())
+            {
+                if (p.Value.ValueKind != JsonValueKind.String)
+                    return (false, $"'headers.{p.Name}' isn't a string.");
+            }
+        }
+
+        if (body.TryGetProperty("timeout", out var t)
+            && t.ValueKind != JsonValueKind.Number)
+        {
+            return (false, "'timeout' isn't a number.");
+        }
+
+        return (true, "");
+    }
+
+    private void ApplyTransportVisibility()
+    {
+        var isStdio = TransportStdio.IsChecked == true;
+        CommandRow.Visibility = isStdio ? Visibility.Visible : Visibility.Collapsed;
+        ArgsSection.Visibility = isStdio ? Visibility.Visible : Visibility.Collapsed;
+        EnvSection.Visibility = isStdio ? Visibility.Visible : Visibility.Collapsed;
+        UrlRow.Visibility = isStdio ? Visibility.Collapsed : Visibility.Visible;
+        HeadersSection.Visibility = isStdio ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void SetFormControlsEnabled(bool enabled)
+    {
+        TransportStdio.IsEnabled = enabled;
+        TransportHttp.IsEnabled = enabled;
+        CommandBox.IsEnabled = enabled;
+        UrlBox.IsEnabled = enabled;
+        TimeoutBox.IsEnabled = enabled;
+        // Panels (Grid/StackPanel) don't expose IsEnabled, so we
+        // visually + interactively disable the whole subtree.
+        var dim = enabled ? 1.0 : 0.5;
+        CommandRow.IsHitTestVisible = enabled;
+        CommandRow.Opacity = dim;
+        ArgsSection.IsHitTestVisible = enabled;
+        ArgsSection.Opacity = dim;
+        EnvSection.IsHitTestVisible = enabled;
+        EnvSection.Opacity = dim;
+        UrlRow.IsHitTestVisible = enabled;
+        UrlRow.Opacity = dim;
+        HeadersSection.IsHitTestVisible = enabled;
+        HeadersSection.Opacity = dim;
+    }
+
+    private void ShowFormCompatBanner(string reason)
+    {
+        FormCompatBar.Message =
+            $"{reason} Use the Raw JSON expander below to edit this server.";
+        FormCompatBar.IsOpen = true;
+    }
+
+    private void HideFormCompatBanner() => FormCompatBar.IsOpen = false;
+
+    // ---- Form change handlers ---------------------------------------------
+
+    private void Transport_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        ApplyTransportVisibility();
+        if (_loadingEditor || _syncingFormFromBody) return;
+        RenderBodyFromForm();
+    }
+
+    private void FormField_Changed(object sender, object e)
+    {
+        if (_loadingEditor || _syncingFormFromBody) return;
+        RenderBodyFromForm();
+    }
+
+    private void ArgItem_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loadingEditor || _syncingFormFromBody) return;
+        RenderBodyFromForm();
+    }
+
+    private void EnvItem_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loadingEditor || _syncingFormFromBody) return;
+        RenderBodyFromForm();
+    }
+
+    private void HeaderItem_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loadingEditor || _syncingFormFromBody) return;
+        RenderBodyFromForm();
+    }
+
+    private void AddArg_Click(object sender, RoutedEventArgs e)
+    {
+        Args.Add(new EditableStringVm(""));
+        if (_loadingEditor || _syncingFormFromBody) return;
+        RenderBodyFromForm();
+    }
+
+    private void RemoveArg_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.DataContext is EditableStringVm vm)
+        {
+            Args.Remove(vm);
+            if (_loadingEditor || _syncingFormFromBody) return;
+            RenderBodyFromForm();
+        }
+    }
+
+    private void AddEnv_Click(object sender, RoutedEventArgs e)
+    {
+        Env.Add(new EditableKeyValueVm("", ""));
+        if (_loadingEditor || _syncingFormFromBody) return;
+        RenderBodyFromForm();
+    }
+
+    private void RemoveEnv_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.DataContext is EditableKeyValueVm vm)
+        {
+            Env.Remove(vm);
+            if (_loadingEditor || _syncingFormFromBody) return;
+            RenderBodyFromForm();
+        }
+    }
+
+    private void AddHeader_Click(object sender, RoutedEventArgs e)
+    {
+        Headers.Add(new EditableKeyValueVm("", ""));
+        if (_loadingEditor || _syncingFormFromBody) return;
+        RenderBodyFromForm();
+    }
+
+    private void RemoveHeader_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.DataContext is EditableKeyValueVm vm)
+        {
+            Headers.Remove(vm);
+            if (_loadingEditor || _syncingFormFromBody) return;
+            RenderBodyFromForm();
+        }
+    }
+
+    // ---- Templates ---------------------------------------------------------
+    //
+    // Pre-canned working starter bodies for the popular MCP servers.
+    // Names are the conventional ones; the user can rename. Tokens
+    // and paths are placeholders the user must edit before saving.
+
+    private static (string name, string body) GetTemplate(string id) => id switch
+    {
+        "filesystem" => ("filesystem", """
+            {
+              "command": "npx",
+              "args": [
+                "-y",
+                "@modelcontextprotocol/server-filesystem",
+                "C:/Users/Public/Documents"
+              ]
+            }
+            """),
+        "git" => ("git", """
+            {
+              "command": "uvx",
+              "args": [
+                "mcp-server-git",
+                "--repository",
+                "C:/path/to/repo"
+              ]
+            }
+            """),
+        "github" => ("github", """
+            {
+              "command": "npx",
+              "args": [
+                "-y",
+                "@modelcontextprotocol/server-github"
+              ],
+              "env": {
+                "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_replace_me"
+              }
+            }
+            """),
+        "memory" => ("memory", """
+            {
+              "command": "npx",
+              "args": [
+                "-y",
+                "@modelcontextprotocol/server-memory"
+              ]
+            }
+            """),
+        "fetch" => ("fetch", """
+            {
+              "command": "uvx",
+              "args": ["mcp-server-fetch"]
+            }
+            """),
+        "time" => ("time", """
+            {
+              "command": "uvx",
+              "args": ["mcp-server-time"]
+            }
+            """),
+        "sequential-thinking" => ("sequential-thinking", """
+            {
+              "command": "npx",
+              "args": [
+                "-y",
+                "@modelcontextprotocol/server-sequential-thinking"
+              ]
+            }
+            """),
+        _ => ("new-server", "{}"),
+    };
 }
