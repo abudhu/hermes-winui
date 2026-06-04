@@ -72,7 +72,31 @@ public sealed partial class SettingsPage : Page
 
         PlatformBridges.ItemsSource = PlatformBridgesList;
         LoadInitialValues();
-        VersionText.Text = $"v{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?"}";
+        ApplyBuildInfo();
+    }
+
+    /// <summary>Wires the About pane's version + commit display.
+    /// Commit link is hidden gracefully when the build wasn't run from
+    /// a git checkout (no SHA embedded by the SDK).</summary>
+    private void ApplyBuildInfo()
+    {
+        VersionText.Text = $"v{BuildInfo.Version}";
+
+        var sha = BuildInfo.CommitSha;
+        if (sha is not null && BuildInfo.CommitUrl is string url)
+        {
+            CommitText.Text = BuildInfo.ShortCommit!;
+            CommitLink.NavigateUri = new Uri(url);
+            CommitLink.IsEnabled = true;
+            ToolTipService.SetToolTip(CommitLink, sha);
+        }
+        else
+        {
+            CommitText.Text = "unknown";
+            CommitLink.IsEnabled = false;
+            ToolTipService.SetToolTip(CommitLink,
+                "No commit SHA embedded — this build wasn't packaged from a git checkout.");
+        }
     }
 
     private void LoadInitialValues()
@@ -857,5 +881,55 @@ public sealed partial class SettingsPage : Page
         DiagnosticsStatusBar.Title = title;
         DiagnosticsStatusBar.Message = message;
         DiagnosticsStatusBar.IsOpen = true;
+    }
+
+    // ---- About pane --------------------------------------------------------
+    //
+    // Update checking is stubbed for now — wiring it up properly means
+    // hitting the GitHub Releases API, comparing semver, and dealing
+    // with rate limits / offline cases. Until that lands, the button
+    // points users at the Releases page so they can self-check.
+
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        CheckUpdatesButton.IsEnabled = false;
+        UpdateStatusText.Text = "Opening Releases page on GitHub…";
+        try
+        {
+            var ok = await Windows.System.Launcher.LaunchUriAsync(new Uri(BuildInfo.ReleasesUrl));
+            if (ok)
+            {
+                ShowAboutStatus(InfoBarSeverity.Informational,
+                    "Update checks not built-in yet",
+                    "Opened the GitHub Releases page — compare the latest tag against your " +
+                    $"current build (v{BuildInfo.Version}). Automatic update checks are a planned follow-up.");
+                UpdateStatusText.Text = $"You are on v{BuildInfo.Version}.";
+            }
+            else
+            {
+                ShowAboutStatus(InfoBarSeverity.Warning,
+                    "Couldn't open browser",
+                    "Visit " + BuildInfo.ReleasesUrl + " manually to check for newer builds.");
+                UpdateStatusText.Text = "";
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowAboutStatus(InfoBarSeverity.Error,
+                "Couldn't open browser", ex.Message);
+            UpdateStatusText.Text = "";
+        }
+        finally
+        {
+            CheckUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    private void ShowAboutStatus(InfoBarSeverity severity, string title, string message)
+    {
+        AboutStatusBar.Severity = severity;
+        AboutStatusBar.Title = title;
+        AboutStatusBar.Message = message;
+        AboutStatusBar.IsOpen = true;
     }
 }
