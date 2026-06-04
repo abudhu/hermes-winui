@@ -129,17 +129,66 @@
                            Style="{StaticResource CaptionTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                            Visibility="Collapsed"
-                           Text="No MCP servers configured. Click 'New server' to add one." />
+                           Text="No MCP servers configured. Click 'Add server' to pick a template or start from scratch." />
 
-                <Button Grid.Row="2"
-                        Margin="2,4,2,2"
-                        HorizontalAlignment="Stretch"
-                        Click="NewServer_Click">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <FontIcon Glyph="&#xE710;" FontSize="14" />
-                        <TextBlock Text="New server" />
-                    </StackPanel>
-                </Button>
+                <!--
+                  "Add server" splits into Empty + Templates. Templates
+                  pre-fill the form with a working JSON skeleton for the
+                  popular MCP servers — users still tweak paths / API
+                  tokens but don't have to memorise the schema.
+                -->
+                <DropDownButton x:Name="AddServerButton"
+                                Grid.Row="2"
+                                Margin="2,4,2,2"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch">
+                    <DropDownButton.Content>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0"
+                                        Orientation="Horizontal"
+                                        Spacing="6"
+                                        HorizontalAlignment="Left">
+                                <FontIcon Glyph="&#xE710;" FontSize="14" />
+                                <TextBlock Text="Add server" />
+                            </StackPanel>
+                        </Grid>
+                    </DropDownButton.Content>
+                    <DropDownButton.Flyout>
+                        <MenuFlyout x:Name="AddServerFlyout" Placement="Bottom">
+                            <MenuFlyoutItem Text="Empty server" Click="AddEmpty_Click">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE7C3;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem Text="filesystem"
+                                            Tag="filesystem"
+                                            Click="AddTemplate_Click" />
+                            <MenuFlyoutItem Text="git"
+                                            Tag="git"
+                                            Click="AddTemplate_Click" />
+                            <MenuFlyoutItem Text="github"
+                                            Tag="github"
+                                            Click="AddTemplate_Click" />
+                            <MenuFlyoutItem Text="memory"
+                                            Tag="memory"
+                                            Click="AddTemplate_Click" />
+                            <MenuFlyoutItem Text="fetch"
+                                            Tag="fetch"
+                                            Click="AddTemplate_Click" />
+                            <MenuFlyoutItem Text="time"
+                                            Tag="time"
+                                            Click="AddTemplate_Click" />
+                            <MenuFlyoutItem Text="sequential-thinking"
+                                            Tag="sequential-thinking"
+                                            Click="AddTemplate_Click" />
+                        </MenuFlyout>
+                    </DropDownButton.Flyout>
+                </DropDownButton>
             </Grid>
         </Border>
 
@@ -269,32 +318,286 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- Secrets advisory -->
-                <TextBlock Grid.Row="5"
-                           Margin="0,-4,0,0"
-                           Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                           TextWrapping="Wrap"
-                           Text="Server JSON below. Values you paste here may include API tokens — they are written verbatim to your config.yaml." />
+                <!--
+                  Form-compat banner. Shows only when the body has
+                  managed keys with wrong types (args containing numbers,
+                  env values that aren't strings, etc.) — surfaces this
+                  before the user notices the form is empty/stale.
+                -->
+                <InfoBar x:Name="FormCompatBar"
+                         Grid.Row="5"
+                         IsOpen="False"
+                         IsClosable="False"
+                         Severity="Warning"
+                         Title="Use Raw JSON to edit this server"
+                         Message="This server uses fields the structured form can't safely edit. Scroll down to Raw JSON." />
 
-                <!-- JSON body editor -->
-                <Border Grid.Row="6"
-                        BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
-                        BorderThickness="1"
-                        CornerRadius="4"
-                        MinHeight="280"
-                        MaxHeight="520">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Auto">
-                        <TextBox x:Name="BodyBox"
-                                 AcceptsReturn="True"
-                                 TextWrapping="NoWrap"
-                                 FontFamily="Consolas"
-                                 BorderThickness="0"
-                                 MinHeight="280"
-                                 TextChanged="Body_Changed" />
-                    </ScrollViewer>
-                </Border>
+                <!-- Main editor body: structured form + raw JSON expander -->
+                <ScrollViewer Grid.Row="6"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="FormPanel" Spacing="12">
+
+                        <!-- Transport -->
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Text="Transport"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <RadioButtons Grid.Column="1"
+                                          x:Name="TransportRadios"
+                                          MaxColumns="2"
+                                          SelectionChanged="Transport_Changed">
+                                <RadioButton x:Name="TransportStdio" Content="stdio (command)" />
+                                <RadioButton x:Name="TransportHttp" Content="HTTP / SSE (URL)" />
+                            </RadioButtons>
+                        </Grid>
+
+                        <!-- stdio: Command -->
+                        <Grid x:Name="CommandRow" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Text="Command"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBox x:Name="CommandBox"
+                                     Grid.Column="1"
+                                     FontFamily="Consolas"
+                                     PlaceholderText="uvx, npx, python, ..."
+                                     TextChanged="FormField_Changed" />
+                        </Grid>
+
+                        <!-- stdio: Args -->
+                        <StackPanel x:Name="ArgsSection" Spacing="6">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           VerticalAlignment="Center"
+                                           Text="Args"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <Button Grid.Column="2" Click="AddArg_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <FontIcon Glyph="&#xE710;" FontSize="12" />
+                                        <TextBlock Text="Add arg" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                            <ItemsRepeater x:Name="ArgsRepeater">
+                                <ItemsRepeater.Layout>
+                                    <StackLayout Spacing="4" />
+                                </ItemsRepeater.Layout>
+                                <ItemsRepeater.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:EditableStringVm">
+                                        <Grid ColumnSpacing="6" Margin="132,0,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Grid.Column="0"
+                                                     FontFamily="Consolas"
+                                                     Text="{x:Bind Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                     TextChanged="ArgItem_Changed" />
+                                            <Button Grid.Column="1"
+                                                    Click="RemoveArg_Click"
+                                                    ToolTipService.ToolTip="Remove this arg">
+                                                <FontIcon Glyph="&#xE74D;" FontSize="12" />
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsRepeater.ItemTemplate>
+                            </ItemsRepeater>
+                        </StackPanel>
+
+                        <!-- stdio: Env vars -->
+                        <StackPanel x:Name="EnvSection" Spacing="6">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           VerticalAlignment="Center"
+                                           Text="Env vars"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <Button Grid.Column="2" Click="AddEnv_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <FontIcon Glyph="&#xE710;" FontSize="12" />
+                                        <TextBlock Text="Add env var" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                            <ItemsRepeater x:Name="EnvRepeater">
+                                <ItemsRepeater.Layout>
+                                    <StackLayout Spacing="4" />
+                                </ItemsRepeater.Layout>
+                                <ItemsRepeater.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:EditableKeyValueVm">
+                                        <Grid ColumnSpacing="6" Margin="132,0,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Grid.Column="0"
+                                                     FontFamily="Consolas"
+                                                     PlaceholderText="KEY"
+                                                     Text="{x:Bind Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                     TextChanged="EnvItem_Changed" />
+                                            <TextBox Grid.Column="1"
+                                                     FontFamily="Consolas"
+                                                     PlaceholderText="value"
+                                                     Text="{x:Bind Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                     TextChanged="EnvItem_Changed" />
+                                            <Button Grid.Column="2"
+                                                    Click="RemoveEnv_Click"
+                                                    ToolTipService.ToolTip="Remove this env var">
+                                                <FontIcon Glyph="&#xE74D;" FontSize="12" />
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsRepeater.ItemTemplate>
+                            </ItemsRepeater>
+                        </StackPanel>
+
+                        <!-- HTTP: URL -->
+                        <Grid x:Name="UrlRow" ColumnSpacing="12" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Text="URL"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBox x:Name="UrlBox"
+                                     Grid.Column="1"
+                                     FontFamily="Consolas"
+                                     PlaceholderText="https://example.com/mcp"
+                                     TextChanged="FormField_Changed" />
+                        </Grid>
+
+                        <!-- HTTP: Headers -->
+                        <StackPanel x:Name="HeadersSection" Spacing="6" Visibility="Collapsed">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           VerticalAlignment="Center"
+                                           Text="Headers"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <Button Grid.Column="2" Click="AddHeader_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <FontIcon Glyph="&#xE710;" FontSize="12" />
+                                        <TextBlock Text="Add header" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                            <ItemsRepeater x:Name="HeadersRepeater">
+                                <ItemsRepeater.Layout>
+                                    <StackLayout Spacing="4" />
+                                </ItemsRepeater.Layout>
+                                <ItemsRepeater.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:EditableKeyValueVm">
+                                        <Grid ColumnSpacing="6" Margin="132,0,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Grid.Column="0"
+                                                     FontFamily="Consolas"
+                                                     PlaceholderText="Header-Name"
+                                                     Text="{x:Bind Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                     TextChanged="HeaderItem_Changed" />
+                                            <TextBox Grid.Column="1"
+                                                     FontFamily="Consolas"
+                                                     PlaceholderText="value"
+                                                     Text="{x:Bind Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                     TextChanged="HeaderItem_Changed" />
+                                            <Button Grid.Column="2"
+                                                    Click="RemoveHeader_Click"
+                                                    ToolTipService.ToolTip="Remove this header">
+                                                <FontIcon Glyph="&#xE74D;" FontSize="12" />
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsRepeater.ItemTemplate>
+                            </ItemsRepeater>
+                        </StackPanel>
+
+                        <!-- Optional: Timeout (both transports) -->
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Text="Timeout (s)"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <NumberBox x:Name="TimeoutBox"
+                                       Grid.Column="1"
+                                       HorizontalAlignment="Left"
+                                       Width="160"
+                                       Minimum="1"
+                                       Maximum="86400"
+                                       SpinButtonPlacementMode="Hidden"
+                                       PlaceholderText="(default)"
+                                       ValueChanged="FormField_Changed" />
+                        </Grid>
+
+                        <!--
+                          Raw JSON Expander. Contains the BodyBox — the
+                          canonical source-of-truth that the save/dirty
+                          machinery still reads from. Form edits push
+                          here; raw edits flow back into the form.
+                        -->
+                        <Expander HorizontalAlignment="Stretch"
+                                  HorizontalContentAlignment="Stretch">
+                            <Expander.Header>
+                                <TextBlock Text="Raw JSON"
+                                           Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            </Expander.Header>
+                            <StackPanel Spacing="8">
+                                <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                           TextWrapping="Wrap"
+                                           Text="Values you enter here may include API tokens — they are written verbatim to your config.yaml. Editing here updates the form above (and vice versa) so long as the JSON is valid and uses known field shapes." />
+                                <Border BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="4"
+                                        MinHeight="200"
+                                        MaxHeight="380">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Auto">
+                                        <TextBox x:Name="BodyBox"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="NoWrap"
+                                                 FontFamily="Consolas"
+                                                 BorderThickness="0"
+                                                 MinHeight="200"
+                                                 TextChanged="Body_Changed" />
+                                    </ScrollViewer>
+                                </Border>
+                            </StackPanel>
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
 
                 <!-- Status caption -->
                 <TextBlock Grid.Row="7"
