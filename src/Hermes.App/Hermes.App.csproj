@@ -8,6 +8,9 @@
     <Platforms>x86;x64;ARM64</Platforms>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant())</RuntimeIdentifier>
     <PublishProfile Condition="Exists('Properties\PublishProfiles\win-$(Platform).pubxml')">win-$(Platform).pubxml</PublishProfile>
+    <!-- Pre-1.0: substantial features (chat, sessions, MCP, diagnostics)
+         but not yet ready for a 1.0 promise. -->
+    <Version>0.5.0</Version>
     <UseWinUI>true</UseWinUI>
     <WinUISDKReferences>false</WinUISDKReferences>
     <EnableMsixTooling>true</EnableMsixTooling>
@@ -84,4 +87,31 @@
     <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">False</PublishTrimmed>
     <PublishTrimmed Condition="'$(Configuration)' != 'Debug'">True</PublishTrimmed>
   </PropertyGroup>
+
+  <!--
+    Embed the current git commit SHA into AssemblyInformationalVersion so
+    the About pane can show + link to the exact build's commit. Going
+    direct via $(InformationalVersion) here because the .NET SDK's own
+    source-control task can race against a Source-Revision-Id set by a
+    BeforeTargets target — depending on order it may overwrite ours with
+    a stale value from a prior build's cache.
+  -->
+  <Target Name="SetInformationalVersionFromGit"
+          BeforeTargets="GetAssemblyVersion;GenerateAssemblyInfo">
+    <Exec Command="git rev-parse HEAD"
+          ConsoleToMSBuild="True"
+          IgnoreExitCode="True"
+          ContinueOnError="True"
+          WorkingDirectory="$(MSBuildProjectDirectory)">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GitHeadSha" />
+      <Output TaskParameter="ExitCode" PropertyName="_GitExitCode" />
+    </Exec>
+    <PropertyGroup Condition="'$(_GitExitCode)' == '0' and '$(_GitHeadSha)' != ''">
+      <SourceRevisionId>$(_GitHeadSha.Trim())</SourceRevisionId>
+      <InformationalVersion>$(Version)+$(_GitHeadSha.Trim())</InformationalVersion>
+    </PropertyGroup>
+    <Message Text="Hermes.App build: git HEAD = $(_GitHeadSha.Trim()), InformationalVersion = $(InformationalVersion)"
+             Importance="High"
+             Condition="'$(_GitExitCode)' == '0' and '$(_GitHeadSha)' != ''" />
+  </Target>
 </Project>

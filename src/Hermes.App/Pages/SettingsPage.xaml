@@ -296,7 +296,7 @@
                 -->
                 <Expander HorizontalAlignment="Stretch">
                     <Expander.Header>
-                        <TextBlock Text="Where files live"
+                        <TextBlock Text="Hermes home directory"
                                    Style="{StaticResource BodyStrongTextBlockStyle}" />
                     </Expander.Header>
                     <Grid ColumnSpacing="16" Padding="0,4,0,4">
@@ -347,7 +347,7 @@
                           Visibility="Collapsed"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
-                <StackPanel MaxWidth="820"
+                <StackPanel MaxWidth="780"
                             HorizontalAlignment="Stretch"
                             Spacing="16">
 
@@ -614,22 +614,100 @@
                             HorizontalAlignment="Stretch"
                             Spacing="16">
                     <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="About" />
+
                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1"
                             CornerRadius="8"
                             Padding="20,16">
-                        <StackPanel Spacing="6">
-                            <TextBlock Text="Hermes WinUI companion"
+                        <StackPanel Spacing="14">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Hermes WinUI companion"
+                                           Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                <TextBlock Text="A Windows-native dashboard, chat, and session explorer for the local Hermes agent."
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <Grid ColumnDefinitions="110,*"
+                                  RowDefinitions="Auto,Auto"
+                                  RowSpacing="4">
+                                <TextBlock Text="Version"
+                                           VerticalAlignment="Center"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock x:Name="VersionText"
+                                           Grid.Column="1"
+                                           VerticalAlignment="Center"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           FontFamily="Consolas" />
+                                <TextBlock Text="Commit"
+                                           Grid.Row="1"
+                                           VerticalAlignment="Center"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <HyperlinkButton x:Name="CommitLink"
+                                                 Grid.Row="1"
+                                                 Grid.Column="1"
+                                                 Padding="0"
+                                                 HorizontalAlignment="Left">
+                                    <TextBlock x:Name="CommitText"
+                                               FontFamily="Consolas" />
+                                </HyperlinkButton>
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <HyperlinkButton Content="Open repo on GitHub"
+                                                 NavigateUri="https://github.com/abudhu/hermes-winui" />
+                                <HyperlinkButton Content="Releases"
+                                                 NavigateUri="https://github.com/abudhu/hermes-winui/releases" />
+                                <HyperlinkButton Content="Report an issue"
+                                                 NavigateUri="https://github.com/abudhu/hermes-winui/issues/new" />
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                <Button x:Name="CheckUpdatesButton"
+                                        Content="Check for updates"
+                                        Click="CheckUpdates_Click" />
+                                <TextBlock x:Name="UpdateStatusText"
+                                           VerticalAlignment="Center"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <InfoBar x:Name="AboutStatusBar"
+                                     IsOpen="False"
+                                     IsClosable="True" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="20,16">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Acknowledgements"
                                        Style="{StaticResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="A Windows-native dashboard, chat, and session explorer for the local Hermes agent."
+                            <TextBlock TextWrapping="Wrap"
                                        Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       TextWrapping="Wrap" />
-                            <TextBlock x:Name="VersionText"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}">
+                                Built to companion
+                                <Hyperlink NavigateUri="https://github.com/nousresearch/hermes-agent">Hermes</Hyperlink>
+                                by Nous Research — see the upstream repo for the agent itself.
+                            </TextBlock>
+                            <TextBlock TextWrapping="Wrap"
                                        Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                       FontFamily="Consolas" />
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}">
+                                UI powered by
+                                <Hyperlink NavigateUri="https://github.com/microsoft/WindowsAppSDK">Windows App SDK</Hyperlink>
+                                (WinUI 3),
+                                <Hyperlink NavigateUri="https://github.com/xoofx/markdig">Markdig</Hyperlink>,
+                                and
+                                <Hyperlink NavigateUri="https://github.com/CommunityToolkit/dotnet">CommunityToolkit.Mvvm</Hyperlink>.
+                            </TextBlock>
                         </StackPanel>
                     </Border>
                 </StackPanel>

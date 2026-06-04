@@ -1407,10 +1407,27 @@ public sealed partial class McpServersView : UserControl
 
     private static (string name, string body) GetTemplate(string id) => id switch
     {
+        // Templates pre-fill the editor with known-good config blobs.
+        //
+        // Windows quirk worth knowing: `npx` is a .cmd shim, not a real
+        // executable. Spawning it with CreateProcess (which is what
+        // most MCP hosts do under the hood) fails unless you wrap with
+        // `cmd /c`. The MCP docs explicitly recommend `"command":
+        // "cmd", "args": ["/c", "npx", ...]` on Windows — we follow
+        // that for every npx-based template here.
+        //
+        // The legacy `@modelcontextprotocol/server-github` package is
+        // ARCHIVED. The current canonical implementation is the Go
+        // server at github/github-mcp-server, distributed as a Docker
+        // image — the template below points at that. Users who don't
+        // have Docker can swap to the local binary documented in the
+        // server's README.
         "filesystem" => ("filesystem", """
             {
-              "command": "npx",
+              "command": "cmd",
               "args": [
+                "/c",
+                "npx",
                 "-y",
                 "@modelcontextprotocol/server-filesystem",
                 "C:/Users/Public/Documents"
@@ -1429,10 +1446,14 @@ public sealed partial class McpServersView : UserControl
             """),
         "github" => ("github", """
             {
-              "command": "npx",
+              "command": "docker",
               "args": [
-                "-y",
-                "@modelcontextprotocol/server-github"
+                "run",
+                "-i",
+                "--rm",
+                "-e",
+                "GITHUB_PERSONAL_ACCESS_TOKEN",
+                "ghcr.io/github/github-mcp-server"
               ],
               "env": {
                 "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_replace_me"
@@ -1441,8 +1462,10 @@ public sealed partial class McpServersView : UserControl
             """),
         "memory" => ("memory", """
             {
-              "command": "npx",
+              "command": "cmd",
               "args": [
+                "/c",
+                "npx",
                 "-y",
                 "@modelcontextprotocol/server-memory"
               ]
@@ -1462,8 +1485,10 @@ public sealed partial class McpServersView : UserControl
             """),
         "sequential-thinking" => ("sequential-thinking", """
             {
-              "command": "npx",
+              "command": "cmd",
               "args": [
+                "/c",
+                "npx",
                 "-y",
                 "@modelcontextprotocol/server-sequential-thinking"
               ]
