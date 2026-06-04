@@ -885,43 +885,89 @@ public sealed partial class SettingsPage : Page
 
     // ---- About pane --------------------------------------------------------
     //
-    // Update checking is stubbed for now — wiring it up properly means
-    // hitting the GitHub Releases API, comparing semver, and dealing
-    // with rate limits / offline cases. Until that lands, the button
-    // points users at the Releases page so they can self-check.
+    // "Check for updates" pings the GitHub Releases API for the latest
+    // tag and compares it to BuildInfo.Version. The UpdateChecker
+    // service handles HTTP, payload parsing, rate limiting (403/429),
+    // missing-release (404), and network-error cases — we just map its
+    // result onto the InfoBar + status line, with an Action button
+    // hyperlink to the release page when one is available.
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
     {
         CheckUpdatesButton.IsEnabled = false;
-        UpdateStatusText.Text = "Opening Releases page on GitHub…";
+        UpdateStatusText.Text = "Checking GitHub for updates…";
+        AboutStatusBar.IsOpen = false;
+        // Clear any prior ActionButton so a previous "View release"
+        // doesn't stick around past a check that no longer offers one.
+        AboutStatusBar.ActionButton = null;
         try
         {
-            var ok = await Windows.System.Launcher.LaunchUriAsync(new Uri(BuildInfo.ReleasesUrl));
-            if (ok)
-            {
-                ShowAboutStatus(InfoBarSeverity.Informational,
-                    "Update checks not built-in yet",
-                    "Opened the GitHub Releases page — compare the latest tag against your " +
-                    $"current build (v{BuildInfo.Version}). Automatic update checks are a planned follow-up.");
-                UpdateStatusText.Text = $"You are on v{BuildInfo.Version}.";
-            }
-            else
-            {
-                ShowAboutStatus(InfoBarSeverity.Warning,
-                    "Couldn't open browser",
-                    "Visit " + BuildInfo.ReleasesUrl + " manually to check for newer builds.");
-                UpdateStatusText.Text = "";
-            }
+            using var checker = new UpdateChecker();
+            var result = await checker.CheckAsync(BuildInfo.Version);
+            ApplyUpdateResult(result);
         }
         catch (Exception ex)
         {
-            ShowAboutStatus(InfoBarSeverity.Error,
-                "Couldn't open browser", ex.Message);
+            ShowAboutStatus(InfoBarSeverity.Error, "Update check failed", ex.Message);
             UpdateStatusText.Text = "";
         }
         finally
         {
             CheckUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    private void ApplyUpdateResult(UpdateCheckResult r)
+    {
+        switch (r.Status)
+        {
+            case UpdateStatus.UpToDate:
+                ShowAboutStatus(InfoBarSeverity.Success, "You're up to date", r.Message ?? "");
+                UpdateStatusText.Text = $"Latest release: v{r.LatestVersion}";
+                break;
+
+            case UpdateStatus.UpdateAvailable:
+                ShowAboutStatus(InfoBarSeverity.Informational,
+                    $"Update available: v{r.LatestVersion}", r.Message ?? "");
+                UpdateStatusText.Text = $"Current: v{BuildInfo.Version} → Latest: v{r.LatestVersion}";
+                if (!string.IsNullOrEmpty(r.LatestUrl))
+                {
+                    AboutStatusBar.ActionButton = new HyperlinkButton
+                    {
+                        Content = "View release",
+                        NavigateUri = new Uri(r.LatestUrl!),
+                    };
+                }
+                break;
+
+            case UpdateStatus.AheadOfReleased:
+                ShowAboutStatus(InfoBarSeverity.Informational, "Dev build", r.Message ?? "");
+                UpdateStatusText.Text = $"Current: v{BuildInfo.Version} (latest released: v{r.LatestVersion})";
+                break;
+
+            case UpdateStatus.NoReleases:
+                ShowAboutStatus(InfoBarSeverity.Informational, "No releases yet",
+                    r.Message ?? "This repository hasn't published any releases.");
+                UpdateStatusText.Text = $"Current: v{BuildInfo.Version}";
+                AboutStatusBar.ActionButton = new HyperlinkButton
+                {
+                    Content = "Open Releases page",
+                    NavigateUri = new Uri(BuildInfo.ReleasesUrl),
+                };
+                break;
+
+            case UpdateStatus.RateLimited:
+                ShowAboutStatus(InfoBarSeverity.Warning, "GitHub rate-limited",
+                    r.Message ?? "Try again in a few minutes.");
+                UpdateStatusText.Text = "";
+                break;
+
+            case UpdateStatus.NetworkError:
+            default:
+                ShowAboutStatus(InfoBarSeverity.Warning, "Couldn't check for updates",
+                    r.Message ?? "Network error — check your connection and try again.");
+                UpdateStatusText.Text = "";
+                break;
         }
     }
 
