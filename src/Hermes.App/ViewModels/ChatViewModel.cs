@@ -91,6 +91,17 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<MessageVm> Messages { get; } = [];
 
+    /// <summary>Files the user has attached to the next outgoing message
+    /// via the paperclip button in the composer. Cleared on send (whether
+    /// the send succeeds or fails — keeping them around after a fail would
+    /// silently re-attach to whatever the user types next, which is a
+    /// nasty surprise for sensitive files). Contains both successfully-
+    /// read entries and error/binary entries so the chip strip can show
+    /// the user why a file won't go through.</summary>
+    public ObservableCollection<AttachmentVm> Attachments { get; } = [];
+
+    public bool HasAttachments => Attachments.Count > 0;
+
     /// <summary>Wraps Messages.Count so the empty-state visibility binding can OneWay-bind to it.</summary>
     public bool HasMessages => Messages.Count > 0;
 
@@ -284,6 +295,12 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
             CopyAsMarkdownCommand.NotifyCanExecuteChanged();
             SaveAsMarkdownCommand.NotifyCanExecuteChanged();
         };
+        Attachments.CollectionChanged += (_, __) =>
+        {
+            OnPropertyChanged(nameof(HasAttachments));
+            OnPropertyChanged(nameof(HasSendableContent));
+            SendCommand.NotifyCanExecuteChanged();
+        };
         // SelectedModelDisplay reads from AvailableModels — re-raise on
         // membership change so the read-only chip's text refreshes when
         // EnsureSelectedModelPresent adds a synthetic entry.
@@ -296,7 +313,24 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         _suppressModelPickFlag = false;
     }
 
-    public bool CanSend => !IsBusy && !string.IsNullOrWhiteSpace(Composer);
+    public bool CanSend => !IsBusy && (HasSendableContent);
+
+    /// <summary>True when there's something worth sending: either non-
+    /// whitespace prose in the composer or at least one successfully-read
+    /// attachment. Attachments-only sends are allowed because dragging a
+    /// file in and immediately hitting Enter is a common gesture.</summary>
+    public bool HasSendableContent
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(Composer)) return true;
+            foreach (var a in Attachments)
+            {
+                if (a.IsSuccess) return true;
+            }
+            return false;
+        }
+    }
 
     partial void OnComposerChanged(string value) => SendCommand.NotifyCanExecuteChanged();
     partial void OnIsBusyChanged(bool value)
@@ -334,14 +368,30 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         // the snapshot still captures their original intent.
         var modelOverride = _userExplicitlyPicked ? SelectedModelId : null;
 
-        var text = (Composer ?? string.Empty).Trim();
-        if (text.Length == 0) return;
+        var prose = (Composer ?? string.Empty).Trim();
+
+        // Snapshot the attachment payloads BEFORE clearing the collection so
+        // a tap-happy user can't yank a chip mid-formatting. Underlying
+        // results are immutable records, so the snapshot is safe.
+        var attachmentPayloads = new List<AttachmentReadResult>(Attachments.Count);
+        foreach (var a in Attachments) attachmentPayloads.Add(a.Result);
+
+        var sendText = AttachmentFormatter.BuildMessage(prose, attachmentPayloads);
+        if (string.IsNullOrEmpty(sendText)) return;
 
         Composer = string.Empty;
+        // Clear chips alongside Composer. Attachments are one-shot — they
+        // travel with the turn they were attached to and the user must
+        // re-attach for the next turn (matches ChatGPT / Copilot UX).
+        Attachments.Clear();
         Messages.Add(new MessageVm
         {
             Role = MessageRole.User,
-            Content = text,
+            // Show the user EXACTLY what the agent sees, fenced blocks and
+            // all. Transparency wins over a prettier-but-misleading "📎
+            // foo.txt" chip — the user can scroll up and verify the actual
+            // payload that left their machine.
+            Content = sendText,
             State = MessageState.Completed,
         });
 
@@ -369,7 +419,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         {
             await Task.Run(async () =>
             {
-                await foreach (var evt in _stream.StreamSessionChatAsync(SessionId!, text, token))
+                await foreach (var evt in _stream.StreamSessionChatAsync(SessionId!, sendText, token))
                 {
                     HandleEvent(assistant, evt);
                 }
@@ -457,6 +507,117 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
         EnsureSelectedModelPresent();
 
         StatusText = "Ready";
+    }
+
+    // -------------------------------------------------------------------
+    // Attachment commands
+    // -------------------------------------------------------------------
+
+    /// <summary>Soft cap on the combined size of all attachments staged for
+    /// the next turn. Per-file we already cap at
+    /// <see cref="AttachmentReader.DefaultMaxBytes"/> (64 KB); this cross-
+    /// file cap stops a power-user from inlining megabytes of text into a
+    /// single prompt by attaching dozens of files. Hit it and we surface a
+    /// <see cref="StatusText"/> nudge and skip the rest of the picked
+    /// files.</summary>
+    private const long MaxTotalAttachmentBytes = 256 * 1024;
+
+    /// <summary>
+    /// Opens a multi-select file picker, reads each file via
+    /// <see cref="AttachmentReader"/>, and appends one <see cref="AttachmentVm"/>
+    /// chip per file. Adds error/binary entries too so the user can see
+    /// (and remove) why a file won't be sent — silently dropping them
+    /// would be more confusing than showing a chip with a red dot.
+    /// </summary>
+    [RelayCommand]
+    private async Task AttachFilesAsync()
+    {
+        var window = App.MainWindow;
+        if (window is null)
+        {
+            StatusText = "Can't open picker — no window";
+            return;
+        }
+
+        IReadOnlyList<Windows.Storage.StorageFile> files;
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FileOpenPicker
+            {
+                SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.DocumentsLibrary,
+                ViewMode = Windows.Storage.Pickers.PickerViewMode.List,
+            };
+            // FileOpenPicker REQUIRES at least one filter. "*" means
+            // "any file" — we do our own binary-sniff per file so we
+            // don't need to lock the user into a list of allowed
+            // extensions (and a curated list would inevitably miss
+            // someone's .toml / .nix / .bicep file).
+            picker.FileTypeFilter.Add("*");
+
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+
+            files = await picker.PickMultipleFilesAsync();
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Picker failed: {ex.Message}";
+            return;
+        }
+
+        if (files is null || files.Count == 0) return;
+
+        long currentTotal = 0;
+        foreach (var a in Attachments)
+        {
+            if (a.IsSuccess) currentTotal += a.Result.Size;
+        }
+
+        int skipped = 0;
+        foreach (var file in files)
+        {
+            // Skip duplicate paths — re-picking the same file twice in
+            // a row almost always means the user fat-fingered the
+            // dialog, not "please attach this twice".
+            bool duplicate = false;
+            foreach (var existing in Attachments)
+            {
+                if (string.Equals(existing.Path, file.Path, StringComparison.OrdinalIgnoreCase))
+                {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+
+            var result = await AttachmentReader.ReadAsync(file.Path);
+
+            // Cross-file cap only counts successfully-read text payloads;
+            // error chips weigh nothing because they don't go into the
+            // outbound message.
+            if (result.IsSuccess && currentTotal + result.Size > MaxTotalAttachmentBytes)
+            {
+                skipped++;
+                continue;
+            }
+
+            Attachments.Add(new AttachmentVm(result));
+            if (result.IsSuccess) currentTotal += result.Size;
+        }
+
+        if (skipped > 0)
+        {
+            StatusText = $"Skipped {skipped} file{(skipped == 1 ? "" : "s")} — total attachment size cap reached.";
+        }
+    }
+
+    /// <summary>Removes a single chip from the staging strip. Bound to the
+    /// per-chip × button.</summary>
+    [RelayCommand]
+    private void RemoveAttachment(AttachmentVm? vm)
+    {
+        if (vm is null) return;
+        Attachments.Remove(vm);
     }
 
     // -------------------------------------------------------------------
