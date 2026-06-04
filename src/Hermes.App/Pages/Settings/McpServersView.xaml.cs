@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Hermes.ApiClient;
 using Hermes.App.ViewModels.Settings;
@@ -88,6 +89,19 @@ public sealed partial class McpServersView : UserControl
     /// editing still works. Recomputed every
     /// <see cref="SyncFormFromBody"/>.</summary>
     private bool _isBodyFormCompatible = true;
+
+    /// <summary>Cancellation token source for the currently-running
+    /// Test connection request. We cancel + dispose this whenever the
+    /// user switches selection, edits the body in a way we should treat
+    /// as a re-test, or starts another test, so a slow process spawn
+    /// can't update the InfoBar for the wrong server.</summary>
+    private CancellationTokenSource? _testCts;
+
+    /// <summary>Monotonically-incrementing token assigned to each Test
+    /// click; compared on completion to decide whether the result is
+    /// still relevant (no newer test or selection change happened
+    /// while we were spawning/waiting).</summary>
+    private int _testGeneration;
 
     /// <summary>Args list backing the stdio "Args" repeater. Each
     /// entry is one positional arg string.</summary>
@@ -262,6 +276,7 @@ public sealed partial class McpServersView : UserControl
         if (e.AddedItems.Count == 0) return;
         if (e.AddedItems[0] is not McpServerItemVm vm) return;
 
+        CancelAnyInFlightTest();
         _selected = vm;
         EditorTitle.Text = $"Edit server '{vm.Name}'";
 
@@ -410,6 +425,149 @@ public sealed partial class McpServersView : UserControl
         RowTogglesTooltip = dirty
             ? "Save or revert current edits first."
             : "";
+
+        // Test connection needs a parseable body and a transport to
+        // poke at. It also turns off while a test is in flight (the
+        // click handler flips this manually when starting).
+        TestButton.IsEnabled = _testCts is null
+            && _bodyIsValidJsonObject
+            && HasTestableTransport();
+    }
+
+    /// <summary>True when <see cref="BodyBox"/>'s parsed body has either
+    /// a non-empty <c>command</c> or a non-empty <c>url</c>. Used to gate
+    /// the Test connection button so we don't try to spawn nothing.</summary>
+    private bool HasTestableTransport()
+    {
+        if (!TryParseBody(BodyBox.Text, out var body)) return false;
+        var hasCommand = body.TryGetProperty("command", out var c)
+            && c.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(c.GetString());
+        var hasUrl = body.TryGetProperty("url", out var u)
+            && u.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(u.GetString());
+        return hasCommand ^ hasUrl;
+    }
+
+    private static bool TryParseBody(string text, out JsonElement body)
+    {
+        body = default;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return false;
+            body = doc.RootElement.Clone();
+            return true;
+        }
+        catch (JsonException) { return false; }
+    }
+
+    private void CancelAnyInFlightTest()
+    {
+        if (_testCts is null) return;
+        try { _testCts.Cancel(); }
+        catch (ObjectDisposedException) { /* benign */ }
+        _testCts.Dispose();
+        _testCts = null;
+    }
+
+    private async void TestConnection_Click(object sender, RoutedEventArgs e)
+    {
+        // Bump generation + cancel any prior in-flight test so its result
+        // can't update the InfoBar after the user clicked again.
+        CancelAnyInFlightTest();
+        var generation = unchecked(++_testGeneration);
+        _testCts = new CancellationTokenSource();
+        var ct = _testCts.Token;
+
+        // Validate the same way Save does, so a broken config produces a
+        // friendly "fix this first" rather than spawning a doomed process.
+        var name = NameBox.Text;
+        var body = BodyBox.Text;
+        var others = Servers.Where(s => !ReferenceEquals(s, _selected)).ToList();
+        var validation = McpServerValidator.Validate(name, body, others);
+        if (validation.Errors.Count > 0)
+        {
+            ShowEditorStatus(InfoBarSeverity.Warning,
+                "Fix validation errors first",
+                string.Join(Environment.NewLine, validation.Errors));
+            _testCts.Dispose();
+            _testCts = null;
+            return;
+        }
+
+        var parsedBody = validation.ParsedBody!.Value;
+        var displayName = string.IsNullOrWhiteSpace(name) ? "server" : name.Trim();
+        SetTestButtonRunning(true);
+        ShowEditorStatus(InfoBarSeverity.Informational,
+            $"Testing '{displayName}'…",
+            "Running MCP initialize handshake. This usually takes a second or two.");
+
+        McpTestResult result;
+        try
+        {
+            var tester = new McpServerTester();
+            result = await Task.Run(() => tester.TestAsync(parsedBody, ct), ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // User switched away or clicked again. The new path owns the UI;
+            // do nothing here.
+            return;
+        }
+        catch (Exception ex)
+        {
+            // If we're the still-current generation, surface the error.
+            if (generation == _testGeneration)
+            {
+                ShowEditorStatus(InfoBarSeverity.Error,
+                    "Test failed", ex.Message);
+                SetTestButtonRunning(false);
+                _testCts?.Dispose();
+                _testCts = null;
+                UpdateButtons();
+            }
+            return;
+        }
+
+        // Stale result guard: if generation changed (user clicked again or
+        // switched selection), discard.
+        if (generation != _testGeneration) return;
+
+        ApplyTestResult(displayName, result);
+        SetTestButtonRunning(false);
+        _testCts?.Dispose();
+        _testCts = null;
+        UpdateButtons();
+    }
+
+    private void SetTestButtonRunning(bool running)
+    {
+        TestButton.IsEnabled = !running && _bodyIsValidJsonObject && HasTestableTransport();
+        TestButtonText.Text = running ? "Testing…" : "Test connection";
+        // Spinner glyph (E895 / GlobalNavigationButton fallback to Refresh E72C).
+        // Use Sync (E895) when idle; just keep idle icon, the InfoBar carries
+        // the running state — avoids needing a ProgressRing in the button.
+    }
+
+    private void ApplyTestResult(string displayName, McpTestResult result)
+    {
+        if (result.IsSuccess)
+        {
+            ShowEditorStatus(InfoBarSeverity.Success,
+                $"{result.Title} — '{displayName}'",
+                result.Detail);
+            return;
+        }
+
+        var severity = result.Status switch
+        {
+            McpTestStatus.Timeout => InfoBarSeverity.Warning,
+            McpTestStatus.ConfigInvalid => InfoBarSeverity.Warning,
+            _ => InfoBarSeverity.Error,
+        };
+        ShowEditorStatus(severity, $"{result.Title} — '{displayName}'", result.Detail);
     }
 
     private void Revert_Click(object sender, RoutedEventArgs e)

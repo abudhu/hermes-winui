@@ -17,6 +17,12 @@ public sealed class HermesConfig
     public string ModelName { get; }
     public Uri BaseAddress => new($"http://{Host}:{Port}/");
 
+    /// <summary>All key/value pairs parsed from the <c>.env</c> file at
+    /// load time (case-insensitive). Exposed so callers like the MCP
+    /// server tester can do <c>${KEY}</c> expansion against the same
+    /// values the gateway uses.</summary>
+    public IReadOnlyDictionary<string, string> EnvVars { get; }
+
     /// <summary>Full path to the <c>.env</c> file inside
     /// <see cref="ConfigDirectory"/>. Exposed so the Settings page can
     /// edit it (via <c>EnvFileWriter.Save</c>) without re-deriving the
@@ -32,6 +38,7 @@ public sealed class HermesConfig
     private HermesConfig(string dir, IReadOnlyDictionary<string, string> env)
     {
         ConfigDirectory = dir;
+        EnvVars = env;
         Host = env.GetValueOrDefault("API_SERVER_HOST", "127.0.0.1");
         Port = int.TryParse(env.GetValueOrDefault("API_SERVER_PORT", "8642"), out var p) ? p : 8642;
         ApiKey = env.GetValueOrDefault("API_SERVER_KEY");
