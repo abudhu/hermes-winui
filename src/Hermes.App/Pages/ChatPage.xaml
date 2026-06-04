@@ -635,74 +635,180 @@
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                     BorderThickness="1"
                     CornerRadius="22"
-                    Padding="18,14,10,14">
-                <Grid ColumnSpacing="10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
+                    Padding="14,12,10,12">
+                <Grid RowSpacing="6">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
-                    <!-- BorderThickness=0 + Background=Transparent makes the
-                         TextBox blend into the outer pill. We override the
-                         TextBox's focus/hover-state brushes to Transparent so
-                         clicking in doesn't paint a dark fill + accent
-                         underline inside our rounded shape. Focus signal is
-                         instead lifted to the outer pill border via
-                         GotFocus/LostFocus in code-behind. -->
-                    <TextBox x:Name="Composer"
-                             Grid.Column="0"
-                             PlaceholderText="Message Hermes — Enter to send, Shift+Enter for newline"
-                             AcceptsReturn="True"
-                             TextWrapping="Wrap"
-                             BorderThickness="0"
-                             Background="Transparent"
-                             Padding="4,6,4,6"
-                             MinHeight="56"
-                             MaxHeight="280"
-                             VerticalContentAlignment="Center"
-                             VerticalAlignment="Stretch"
-                             IsSpellCheckEnabled="True"
-                             Text="{x:Bind ViewModel.Composer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                             PreviewKeyDown="Composer_PreviewKeyDown"
-                             GotFocus="Composer_GotFocus"
-                             LostFocus="Composer_LostFocus">
-                        <TextBox.Resources>
-                            <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
-                            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
-                            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
-                            <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
-                            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
-                            <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
-                        </TextBox.Resources>
-                    </TextBox>
+                    <!-- Attached-files strip. Visible only when at least
+                         one chip exists so the pill doesn't grow a tall
+                         empty header in the common case. ScrollViewer
+                         lets a chip avalanche overflow horizontally
+                         instead of pushing the textbox into a tiny
+                         window. -->
+                    <ScrollViewer Grid.Row="0"
+                                  HorizontalScrollMode="Auto"
+                                  HorizontalScrollBarVisibility="Hidden"
+                                  VerticalScrollMode="Disabled"
+                                  VerticalScrollBarVisibility="Disabled"
+                                  Padding="4,0,4,0"
+                                  Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.HasAttachments), Mode=OneWay}">
+                        <ItemsRepeater x:Name="AttachmentsList"
+                                       ItemsSource="{x:Bind ViewModel.Attachments, Mode=OneWay}"
+                                       Tag="{x:Bind ViewModel}">
+                            <ItemsRepeater.Layout>
+                                <StackLayout Orientation="Horizontal" Spacing="6" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="vm:AttachmentVm">
+                                    <Border Padding="8,4,4,4"
+                                            CornerRadius="10"
+                                            Background="{ThemeResource SubtleFillColorTertiaryBrush}"
+                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            ToolTipService.ToolTip="{x:Bind Tooltip}">
+                                        <StackPanel Orientation="Horizontal"
+                                                    Spacing="6"
+                                                    VerticalAlignment="Center">
+                                            <!-- Document glyph for text chips, picture glyph for
+                                                 image chips, warning for errors. All three are
+                                                 declared with opposite Visibility bindings so the
+                                                 chip's layout doesn't shift between states. -->
+                                            <FontIcon Glyph="&#xE8A5;"
+                                                      FontSize="12"
+                                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                      Visibility="{x:Bind app:Converters.BoolToVisible(IsFile)}" />
+                                            <FontIcon Glyph="&#xEB9F;"
+                                                      FontSize="12"
+                                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                                      Visibility="{x:Bind app:Converters.BoolToVisible(IsImage)}" />
+                                            <FontIcon Glyph="&#xE7BA;"
+                                                      FontSize="12"
+                                                      Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                                      Visibility="{x:Bind app:Converters.BoolToVisible(HasError)}" />
+                                            <TextBlock Text="{x:Bind FileName}"
+                                                       FontSize="12"
+                                                       VerticalAlignment="Center" />
+                                            <TextBlock Text="{x:Bind SizeLabel}"
+                                                       FontSize="11"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                       Visibility="{x:Bind app:Converters.BoolToVisible(IsSuccess)}" />
+                                            <TextBlock Text="{x:Bind ErrorMessage}"
+                                                       FontSize="11"
+                                                       VerticalAlignment="Center"
+                                                       MaxWidth="260"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                                       Visibility="{x:Bind app:Converters.BoolToVisible(HasError)}" />
+                                            <Button Width="22" Height="22"
+                                                    MinWidth="22" MinHeight="22"
+                                                    Padding="0"
+                                                    Background="Transparent"
+                                                    BorderThickness="0"
+                                                    CornerRadius="11"
+                                                    VerticalAlignment="Center"
+                                                    ToolTipService.ToolTip="Remove"
+                                                    Command="{Binding ElementName=AttachmentsList, Path=Tag.RemoveAttachmentCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <FontIcon Glyph="&#xE711;" FontSize="10" />
+                                            </Button>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                    </ScrollViewer>
 
-                    <!-- Send/Stop swap based on ViewModel.IsBusy. Both are
-                         circular (CornerRadius=18 on a 36×36 button) and
-                         dock to the bottom of the pill so a multi-line
-                         composer keeps the button aligned with the last
-                         line of typed text. -->
-                    <Grid Grid.Column="1" VerticalAlignment="Bottom">
-                        <Button x:Name="SendButton"
-                                Style="{StaticResource AccentButtonStyle}"
+                    <Grid Grid.Row="1" ColumnSpacing="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Paperclip attach button. Lives inside the pill
+                             on the left so the gesture mirrors ChatGPT /
+                             Copilot. Bottom-aligned so it stays anchored
+                             when the textbox grows multi-line. -->
+                        <Button x:Name="AttachButton"
+                                Grid.Column="0"
                                 Width="36" Height="36"
                                 MinWidth="36" MinHeight="36"
                                 Padding="0"
                                 CornerRadius="18"
-                                Command="{x:Bind ViewModel.SendCommand}"
-                                ToolTipService.ToolTip="Send (Enter)"
-                                Visibility="{x:Bind app:Converters.BoolToCollapsed(ViewModel.IsBusy), Mode=OneWay}">
-                            <FontIcon Glyph="&#xE74A;" FontSize="14" />
+                                Background="Transparent"
+                                BorderThickness="0"
+                                VerticalAlignment="Bottom"
+                                Command="{x:Bind ViewModel.AttachFilesCommand}"
+                                ToolTipService.ToolTip="Attach files">
+                            <FontIcon Glyph="&#xE723;" FontSize="16" />
                         </Button>
-                        <Button x:Name="StopButton"
-                                Width="36" Height="36"
-                                MinWidth="36" MinHeight="36"
-                                Padding="0"
-                                CornerRadius="18"
-                                Command="{x:Bind ViewModel.StopCommand}"
-                                ToolTipService.ToolTip="Stop"
-                                Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.IsBusy), Mode=OneWay}">
-                            <FontIcon Glyph="&#xE71A;" FontSize="12" />
-                        </Button>
+
+                        <!-- BorderThickness=0 + Background=Transparent makes the
+                             TextBox blend into the outer pill. We override the
+                             TextBox's focus/hover-state brushes to Transparent so
+                             clicking in doesn't paint a dark fill + accent
+                             underline inside our rounded shape. Focus signal is
+                             instead lifted to the outer pill border via
+                             GotFocus/LostFocus in code-behind. -->
+                        <TextBox x:Name="Composer"
+                                 Grid.Column="1"
+                                 PlaceholderText="Message Hermes — Enter to send, Shift+Enter for newline"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 Padding="4,6,4,6"
+                                 MinHeight="56"
+                                 MaxHeight="280"
+                                 VerticalContentAlignment="Center"
+                                 VerticalAlignment="Stretch"
+                                 IsSpellCheckEnabled="True"
+                                 Text="{x:Bind ViewModel.Composer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 PreviewKeyDown="Composer_PreviewKeyDown"
+                                 GotFocus="Composer_GotFocus"
+                                 LostFocus="Composer_LostFocus">
+                            <TextBox.Resources>
+                                <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                            </TextBox.Resources>
+                        </TextBox>
+
+                        <!-- Send/Stop swap based on ViewModel.IsBusy. Both are
+                             circular (CornerRadius=18 on a 36×36 button) and
+                             dock to the bottom of the pill so a multi-line
+                             composer keeps the button aligned with the last
+                             line of typed text. -->
+                        <Grid Grid.Column="2" VerticalAlignment="Bottom">
+                            <Button x:Name="SendButton"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Width="36" Height="36"
+                                    MinWidth="36" MinHeight="36"
+                                    Padding="0"
+                                    CornerRadius="18"
+                                    Command="{x:Bind ViewModel.SendCommand}"
+                                    ToolTipService.ToolTip="Send (Enter)"
+                                    Visibility="{x:Bind app:Converters.BoolToCollapsed(ViewModel.IsBusy), Mode=OneWay}">
+                                <FontIcon Glyph="&#xE74A;" FontSize="14" />
+                            </Button>
+                            <Button x:Name="StopButton"
+                                    Width="36" Height="36"
+                                    MinWidth="36" MinHeight="36"
+                                    Padding="0"
+                                    CornerRadius="18"
+                                    Command="{x:Bind ViewModel.StopCommand}"
+                                    ToolTipService.ToolTip="Stop"
+                                    Visibility="{x:Bind app:Converters.BoolToVisible(ViewModel.IsBusy), Mode=OneWay}">
+                                <FontIcon Glyph="&#xE71A;" FontSize="12" />
+                            </Button>
+                        </Grid>
                     </Grid>
                 </Grid>
             </Border>
